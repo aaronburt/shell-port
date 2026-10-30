@@ -19,51 +19,18 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm audit --omit=dev --audit-level=high
-
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - run: docker build -t shellport:ci .
-
-  smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx playwright-core install --with-deps chromium
-      - run: npm run smoke:full
-
-  release:
-    needs: [check, docker, smoke]
+  version:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - name: Calculate next Major.Minor version
-        id: version
+        id: calc
         env:
           INPUT_MAJOR: ${{ inputs.major_version }}
         run: |
@@ -95,8 +62,192 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Next release version: ${TAG} (${VERSION})"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: docker (${{ matrix.platform }})
+    needs: [version]
+    if: always() && (needs.version.result == 'success' || needs.version.result == 'skipped')
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            uname: x86_64
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            uname: aarch64
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build native container image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: shellport:ci
+          build-args: |
+            APP_VERSION=${{ needs.version.outputs.version }}
+
+      - name: Boot hardened container and run runtime checks
+        env:
+          EXPECTED_UNAME: ${{ matrix.uname }}
+        run: |
+          TMP_DIR=$(mktemp -d)
+          chmod 755 "$TMP_DIR"
+          cat > "$TMP_DIR/config.json" <<'EOF'
+          {
+            "server": { "port": 8080, "host": "0.0.0.0", "publicUrl": "http://127.0.0.1:8080", "trustProxy": false },
+            "github": { "clientId": "ci-client", "clientSecret": "ci-secret" },
+            "users": [{ "github": 4242, "totpSecret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" }],
+            "hosts": [{
+              "id": "ci-host",
+              "name": "ci-host",
+              "host": "127.0.0.1",
+              "username": "demo",
+              "auth": { "type": "password", "password": "ci-password" },
+              "hostKeyFingerprints": ["SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+            }]
+          }
+          EOF
+          chmod 644 "$TMP_DIR/config.json"
+
+          cleanup() {
+            docker logs shellport-ci || true
+            docker rm -f -v shellport-ci >/dev/null 2>&1 || true
+            rm -rf "$TMP_DIR"
+          }
+          trap cleanup EXIT
+
+          docker run -d \
+            --name shellport-ci \
+            --platform "${{ matrix.platform }}" \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            -p 127.0.0.1:8080:8080 \
+            -v "$TMP_DIR/config.json:/config/config.json:ro" \
+            shellport:ci
+
+          ACTUAL_UNAME=$(docker exec shellport-ci uname -m)
+          echo "Container architecture: $ACTUAL_UNAME (expected $EXPECTED_UNAME)"
+          if [ "$ACTUAL_UNAME" != "$EXPECTED_UNAME" ]; then
+            echo "::error::Container uname -m ($ACTUAL_UNAME) did not match expected ($EXPECTED_UNAME)"
+            exit 1
+          fi
+
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect --format '{{.State.Health.Status}}' shellport-ci 2>/dev/null || echo "starting")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container HEALTHCHECK passed (healthy)"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Container did not become healthy in time (last status: $STATUS)"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          node scripts/smoke.mjs http://127.0.0.1:8080 --rate-limit
+
+      - name: Log in to GitHub Container Registry
+        if: needs.version.result == 'success'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image repository name
+        if: needs.version.result == 'success'
+        id: repo
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Push verified architecture digest
+        if: needs.version.result == 'success'
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ steps.repo.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            APP_VERSION=${{ needs.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Export digest file
+        if: needs.version.result == 'success'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          DIGEST="${{ steps.push.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest artifact
+        if: needs.version.result == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run smoke:full
+
+  release:
+    needs: [version, check, docker, smoke]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download architecture digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -108,31 +259,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image repository name
-        id: repo
-        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Create and inspect multi-arch manifest on GHCR
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          SOURCES=""
+          for digest in *; do
+            SOURCES="$SOURCES ${IMAGE}@sha256:${digest}"
+          done
 
-      - name: Build and push multi-arch Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            APP_VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ steps.version.outputs.tag }}
-            ghcr.io/${{ steps.repo.outputs.name }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${TAG}" \
+            -t "${IMAGE}:latest" \
+            $SOURCES
+
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
 
       - name: Create Git tag and GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
