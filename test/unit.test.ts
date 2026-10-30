@@ -8,6 +8,7 @@ import { feedPassphrase } from "../src/client/passphrase.js";
 import { resolveSecret, validateConfig } from "../src/server/config.js";
 import { RateLimiter } from "../src/server/sessions.js";
 import { base32Encode } from "../src/server/totp.js";
+import { validateSetupConfig, isPathWritable, createSetupApp } from "../src/server/setup.js";
 import { generateEd25519 } from "./keys.js";
 
 const type = (current: string, ...chunks: string[]) => {
@@ -177,3 +178,104 @@ test("a blocked key stays blocked while other keys churn", () => {
   for (let i = 0; i < 10; i++) limiter.hit(`noise-${i}`);
   assert.equal(limiter.hit("victim"), false);
 });
+
+test("validateSetupConfig validates correct and incorrect configurations", () => {
+  const valid = {
+    server: { port: 8080, host: "0.0.0.0", publicUrl: "http://localhost:8080", trustProxy: false },
+    github: { clientId: "id", clientSecret: { env: "SEC" } },
+    users: [{ github: "user1", totpSecret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" }],
+    hosts: [{ id: "srv", name: "srv", host: "127.0.0.1", port: 22, username: "admin", auth: { type: "password", password: "pwd" } }],
+    security: { allowUnpinnedHostKeys: true },
+  };
+  assert.equal(validateSetupConfig(valid).valid, true);
+
+  const invalid = {
+    server: { port: 99999, host: "", publicUrl: "bad-url" },
+    github: {},
+    users: [{ github: "bad user name!", totpSecret: "short" }],
+    hosts: [
+      { id: "h1", host: "127.0.0.1", username: "u", auth: { type: "invalid" } },
+      { id: "h1", host: "127.0.0.1", username: "u", auth: { type: "password" } },
+    ],
+  };
+  const res = validateSetupConfig(invalid);
+  assert.equal(res.valid, false);
+  assert.ok(res.errors.length >= 6);
+});
+
+test("createSetupApp endpoints operate as expected", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sp-setup-test-"));
+  const cfgPath = path.join(tmpDir, "config.json");
+  const publicDir = path.resolve("dist/public");
+
+  let savedTriggered = false;
+  const { server, shutdown } = createSetupApp({
+    configPath: cfgPath,
+    publicDir,
+    onSaved: () => {
+      savedTriggered = true;
+    },
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address() as any;
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  try {
+    const health = await fetch(`${baseUrl}/healthz`);
+    assert.equal(health.status, 200);
+    const healthBody = await health.json();
+    assert.deepEqual(healthBody, { ok: true, setup: true });
+
+    const status = await fetch(`${baseUrl}/api/setup/status`);
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.equal(statusBody.exists, false);
+    assert.equal(statusBody.writable, true);
+
+    const totpRes = await fetch(`${baseUrl}/api/setup/totp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account: "tester" }),
+    });
+    assert.equal(totpRes.status, 200);
+    const totpBody = await totpRes.json();
+    assert.ok(typeof totpBody.secret === "string" && totpBody.secret.length >= 26);
+    assert.ok(typeof totpBody.qr === "string" && totpBody.qr.startsWith("data:image/png;base64,"));
+
+    const valRes = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: { port: 8080 } }),
+    });
+    assert.equal(valRes.status, 200);
+    const valBody = await valRes.json();
+    assert.equal(valBody.valid, false);
+
+    const validPayload = {
+      server: { port: 8080, host: "0.0.0.0", publicUrl: "http://localhost:8080", trustProxy: false },
+      github: { clientId: "test-id", clientSecret: "test-sec" },
+      users: [{ github: "testuser", totpSecret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP" }],
+      hosts: [{ id: "srv", name: "srv", host: "127.0.0.1", port: 22, username: "admin", auth: { type: "password", password: "pwd" } }],
+      security: { allowUnpinnedHostKeys: true },
+    };
+
+    const saveRes = await fetch(`${baseUrl}/api/setup/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validPayload),
+    });
+    assert.equal(saveRes.status, 200);
+    const saveBody = await saveRes.json();
+    assert.equal(saveBody.ok, true);
+    assert.equal(saveBody.saved, true);
+    assert.equal(fs.existsSync(cfgPath), true);
+
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(savedTriggered, true);
+  } finally {
+    await shutdown(1000);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+

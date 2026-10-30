@@ -19,6 +19,15 @@ docker compose up -d --build
 
 Access the client at `http://localhost:8080`.
 
+### Web Configuration Generator
+
+If Shellport is launched without an existing `config.json` (such as running a fresh container), it automatically starts in Setup Mode. Visit `http://localhost:8080` in your browser to use the interactive configuration generator:
+
+- Visually configure server networking, GitHub OAuth, session limits, and SSH targets.
+- Generate RFC 6238 Base32 TOTP secrets and scan QR codes directly into your authenticator app.
+- Validate configuration against Shellport's schema.
+- Download `config.json`, copy the JSON payload, or save directly if the container volume is writable.
+
 For production deployment with automatic HTTPS via Caddy, use `deploy/docker-compose.yml`.
 
 ## Local Development
