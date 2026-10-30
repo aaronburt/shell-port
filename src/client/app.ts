@@ -196,7 +196,7 @@ function openTab(h: Host) {
   connect(tab);
 }
 
-function send(tab: Tab, data: Uint8Array) {
+function send(tab: Tab, data: Uint8Array<ArrayBuffer>) {
   if (tab.ws?.readyState === WebSocket.OPEN && tab.state === "connected") tab.ws.send(data);
 }
 
