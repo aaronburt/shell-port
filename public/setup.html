@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Configuration Setup · Shellport</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/setup.css">
+</head>
+<body>
+<header class="setup-header">
+  <div class="header-content">
+    <div class="brand">
+      <span class="logo big">&gt;_</span>
+      <div>
+        <h1>Shellport Setup</h1>
+        <p class="subtitle">Generate and initialize your configuration</p>
+      </div>
+    </div>
+    <div class="status-pill" id="status-pill">Target: <code id="target-path">config.json</code></div>
+  </div>
+</header>
+
+<main class="setup-layout">
+  <section class="setup-main">
+    <form id="setup-form" autocomplete="off">
+      <fieldset class="card">
+        <legend class="card-title">Server &amp; Network</legend>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label for="srv-port">Listen Port</label>
+            <input type="number" id="srv-port" name="srvPort" value="8080" min="1" max="65535" required>
+          </div>
+          <div class="form-group">
+            <label for="srv-host">Listen Host</label>
+            <input type="text" id="srv-host" name="srvHost" value="0.0.0.0" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="srv-url">Public Origin URL</label>
+          <input type="url" id="srv-url" name="srvUrl" placeholder="http://localhost:8080 or https://ssh.example.com" required>
+          <span class="hint">The public URL accessed in your browser. Used for OAuth redirects and secure WebSocket origin checks.</span>
+        </div>
+        <div class="form-group">
+          <label for="srv-proxy">Trust Proxy</label>
+          <select id="srv-proxy" name="srvProxy">
+            <option value="false">Disabled (false)</option>
+            <option value="1">1 reverse proxy hop (e.g. Caddy/Nginx)</option>
+            <option value="2">2 reverse proxy hops (e.g. Cloudflare + Caddy)</option>
+            <option value="true">Enabled for all hops (true)</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend class="card-title">GitHub OAuth</legend>
+        <div class="hint banner">
+          Register an OAuth Application in <a href="https://github.com/settings/applications/new" target="_blank" rel="noreferrer">GitHub Developer Settings</a>. Set the Authorization Callback URL to <code id="oauth-callback-url">/auth/github/callback</code>.
+        </div>
+        <div class="form-group">
+          <label for="gh-client-id">Client ID</label>
+          <input type="text" id="gh-client-id" name="ghClientId" placeholder="e.g. Iv1.0123456789abcdef" required>
+        </div>
+        <div class="form-group">
+          <label for="gh-secret-type">Client Secret Storage</label>
+          <div class="inline-radios">
+            <label><input type="radio" name="ghSecretType" value="env" checked> Environment variable</label>
+            <label><input type="radio" name="ghSecretType" value="literal"> Inline string</label>
+          </div>
+        </div>
+        <div class="form-group" id="gh-secret-env-group">
+          <label for="gh-secret-env">Environment Variable Name</label>
+          <input type="text" id="gh-secret-env" name="ghSecretEnv" value="SHELLPORT_GITHUB_SECRET">
+        </div>
+        <div class="form-group" id="gh-secret-lit-group" hidden>
+          <label for="gh-secret-lit">Client Secret Value</label>
+          <input type="password" id="gh-secret-lit" name="ghSecretLit" placeholder="GitHub Client Secret">
+        </div>
+      </fieldset>
+
+      <fieldset class="card">
+        <div class="card-header-row">
+          <legend class="card-title">Authorized Users &amp; MFA</legend>
+          <button type="button" class="btn small" id="btn-add-user">+ Add User</button>
+        </div>
+        <p class="hint">Each user must be identified by their GitHub login or numeric ID, and require a 160-bit Base32 TOTP secret.</p>
+        <div id="users-list" class="items-list"></div>
+      </fieldset>
+
+      <fieldset class="card">
+        <div class="card-header-row">
+          <legend class="card-title">Preconfigured SSH Hosts</legend>
+          <button type="button" class="btn small" id="btn-add-host">+ Add Host</button>
+        </div>
+        <p class="hint">SSH target destinations with pinned host keys and server-held credentials.</p>
+        <div id="hosts-list" class="items-list"></div>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend class="card-title">Security &amp; Resource Limits</legend>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label for="lim-terminals">Max Terminals Per User</label>
+            <input type="number" id="lim-terminals" name="limTerminals" value="10" min="1" max="100" required>
+          </div>
+          <div class="form-group">
+            <label for="lim-idle">Idle Timeout (Minutes)</label>
+            <input type="number" id="lim-idle" name="limIdle" value="30" min="0" max="1440" required>
+          </div>
+        </div>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label for="lim-attempts">Login Attempts Per 15 Min</label>
+            <input type="number" id="lim-attempts" name="limAttempts" value="30" min="1" max="1000" required>
+          </div>
+          <div class="form-group">
+            <label for="lim-session">Session Duration (Hours)</label>
+            <input type="number" id="lim-session" name="limSession" value="12" min="1" max="168" required>
+          </div>
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="sec-unpinned" name="secUnpinned">
+            <span>Allow unpinned host keys (Development/Testing only)</span>
+          </label>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <aside class="setup-sidebar">
+    <div class="sidebar-card">
+      <div class="card-header-row">
+        <h2>Configuration Preview</h2>
+        <span class="badge" id="preview-badge">Live</span>
+      </div>
+      <div id="validation-errors" class="alert-box error" role="alert" hidden></div>
+      <div id="action-status" class="alert-box success" role="status" hidden></div>
+      <div class="code-preview-wrap">
+        <pre><code id="json-preview"></code></pre>
+      </div>
+      <div class="actions-stack">
+        <button type="button" class="btn" id="btn-validate">Validate</button>
+        <div class="grid grid-2">
+          <button type="button" class="btn" id="btn-copy">Copy JSON</button>
+          <button type="button" class="btn" id="btn-download">Download</button>
+        </div>
+        <button type="button" class="btn primary big" id="btn-save">Save &amp; Start Shellport</button>
+      </div>
+      <p class="hint center" id="save-note">If container filesystem is read-only, download the file and mount it at <code id="note-path">/config/config.json</code>.</p>
+    </div>
+  </aside>
+</main>
+<script src="/assets/setup.js"></script>
+</body>
+</html>
+

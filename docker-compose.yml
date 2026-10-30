@@ -1,5 +1,6 @@
 services:
   shellport:
+    image: ghcr.io/aaronburt/shell-port:latest
     build: .
     restart: unless-stopped
     read_only: true
