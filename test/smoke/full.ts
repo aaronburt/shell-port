@@ -650,14 +650,17 @@ test("UI: the Sign-ins panel shows the other session and signs it out, closing i
   await ui.locator("#signout-others").waitFor({ state: "visible" });
   const peerSid = (await sidOf(peerCtx))!;
   await ui.route("**/api/signins/signout-others", (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }));
-  await ui.locator("#signout-others").click();
-  await ui.locator("#notice:not([hidden])").waitFor();
-  assert.match(await ui.locator("#notice").innerText(), /Could not sign out the other sessions \(status 500\)/);
-  assert.equal((await getJson(`sp_sid=${peerSid}`, "/api/me")).status, 200, "a failed request must leave the other session alone");
-  await ui.unroute("**/api/signins/signout-others");
+  try {
+    await ui.locator("#signout-others").click();
+    await ui.locator("#notice:not([hidden])").waitFor();
+    assert.match(await ui.locator("#notice").innerText(), /Could not sign out the other sessions \(status 500\)/);
+    assert.equal((await getJson(`sp_sid=${peerSid}`, "/api/me")).status, 200, "a failed request must leave the other session alone");
+  } finally {
+    await ui.unroute("**/api/signins/signout-others");
+  }
   await ui.locator("#signout-others").click();
   await until("peer terminal closed", async () => /closed|Disconnected/.test(await statusText(peer)), 10_000);
-  await peer.reload();
+  await peer.goto(base + "/").catch(() => {});
   await peer.getByRole("heading", { name: /Sign in to Shellport/ }).waitFor();
   await until("no other sessions", async () => !(await ui.locator("#signins").innerText()).includes("other session"));
   await peerCtx.close();
@@ -668,13 +671,15 @@ test("UI: a failed sign out says so and keeps the page and session", async () =>
   await ui.locator('button.host[data-host="plain"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
   await ui.route("**/auth/logout", (route) => route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"bad_origin"}' }));
-  await ui.locator("#signout").click();
-  await ui.locator("#notice:not([hidden])").waitFor();
-  assert.match(await ui.locator("#notice").innerText(), /Sign out failed \(status 403\)\. You are still signed in/);
-  assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0, "the page must not reload to the sign-in page");
-  assert.match(await statusText(ui), /connected/, "the terminal must stay open");
-  assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200);
-  await ui.unroute("**/auth/logout");
+  try {
+    await ui.locator("#signout").click();
+    await until("failed signout notice", async () => /Sign out failed \(status 403\)\. You are still signed in/.test(await ui.locator("#notice").innerText()));
+    assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0, "the page must not reload to the sign-in page");
+    assert.match(await statusText(ui), /connected/, "the terminal must stay open");
+    assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200);
+  } finally {
+    await ui.unroute("**/auth/logout");
+  }
 });
 
 test("UI: signing out lands on the sign-in page and the session is dead", async () => {

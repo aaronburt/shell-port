@@ -1,6 +1,6 @@
 services:
   shellport:
-    image: ghcr.io/aaronburt/shellport:latest
+    image: ghcr.io/aaronburt/shell-port:latest
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
