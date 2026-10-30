@@ -4,9 +4,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      major_version:
+        description: "Set a new Major version (e.g. 1 to release v1.0). Leave blank to auto-increment minor."
+        required: false
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
@@ -39,3 +49,89 @@ jobs:
       - run: npm ci
       - run: npx playwright-core install --with-deps chromium
       - run: npm run smoke:full
+
+  release:
+    needs: [check, docker, smoke]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next Major.Minor version
+        id: version
+        env:
+          INPUT_MAJOR: ${{ inputs.major_version }}
+        run: |
+          git fetch --tags --force
+          LATEST_TAG=$(git tag -l | grep -E '^v?[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n | tail -n 1 || true)
+
+          if [ -n "$INPUT_MAJOR" ]; then
+            if ! [[ "$INPUT_MAJOR" =~ ^[0-9]+$ ]]; then
+              echo "::error::major_version input must be a non-negative integer"
+              exit 1
+            fi
+            MAJOR="$INPUT_MAJOR"
+            if [ -n "$LATEST_TAG" ] && [ "${LATEST_TAG%%.*}" = "$MAJOR" ]; then
+              MINOR=$(( ${LATEST_TAG#*.} + 1 ))
+            else
+              MINOR=0
+            fi
+          elif [ -z "$LATEST_TAG" ]; then
+            MAJOR=0
+            MINOR=1
+          else
+            MAJOR="${LATEST_TAG%%.*}"
+            MINOR=$(( ${LATEST_TAG#*.} + 1 ))
+          fi
+
+          VERSION="${MAJOR}.${MINOR}"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Next release version: ${TAG} (${VERSION})"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a8196184e8cd7ed1772b27f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Create Git tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --generate-notes
