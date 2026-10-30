@@ -1,4 +1,4 @@
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache openssh-server bash \
  && adduser -D -s /bin/bash demo \
  && echo "demo:$(head -c 32 /dev/urandom | base64)" | chpasswd \
