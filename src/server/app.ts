@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { WebSocketServer } from "ws";
-import { parse as parseCookie, serialize as serializeCookie } from "cookie";
+import { parseCookie, stringifySetCookie } from "cookie";
 import { findUser, hostsForUser, type LoadedConfig } from "./config.js";
 import { verifyTotp } from "./totp.js";
 import { SessionStore, RateLimiter, type UserSession } from "./sessions.js";
@@ -51,6 +51,8 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const who = (s: UserSession) => ({ login: s.login, id: s.githubId });
 
   const cookieOpts = (maxAge: number) => ({ httpOnly: true, secure: https, sameSite: "lax" as const, path: "/", maxAge });
+  const serializeCookie = (name: string, value: string, opts: ReturnType<typeof cookieOpts>) =>
+    stringifySetCookie({ name, value, ...opts });
   const cookieValue = (header: string | undefined, name: string) => parseCookie(header ?? "")[name];
   const ipOf = (req: Request) => req.ip ?? "";
   const anySession = (cookieHeader: string | undefined): UserSession | undefined =>
