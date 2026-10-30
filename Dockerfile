@@ -1,4 +1,4 @@
-FROM node:24-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -6,7 +6,7 @@ COPY . .
 ARG APP_VERSION
 RUN if [ -n "$APP_VERSION" ]; then npm pkg set version="${APP_VERSION}.0"; fi && npm run build && npm prune --omit=dev
 
-FROM node:24-alpine
+FROM node:25-alpine
 ENV NODE_ENV=production SHELLPORT_CONFIG=/config/config.json
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
