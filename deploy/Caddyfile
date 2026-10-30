@@ -1,0 +1,4 @@
+ssh.example.com {
+	encode gzip
+	reverse_proxy shellport:8080
+}

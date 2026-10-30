@@ -1,0 +1,16 @@
+{
+  "server": { "port": 8080, "host": "0.0.0.0", "publicUrl": "http://localhost:8080", "trustProxy": false },
+  "github": { "clientId": "PUT_YOUR_GITHUB_OAUTH_CLIENT_ID_HERE", "clientSecret": { "env": "SHELLPORT_GITHUB_SECRET" } },
+  "users": [ { "github": 12345678, "totpSecret": { "env": "SHELLPORT_TOTP_USER" } } ],
+  "hosts": [
+    {
+      "id": "example",
+      "name": "example-host",
+      "group": "Local",
+      "host": "host.docker.internal",
+      "username": "YOUR_SSH_USER",
+      "auth": { "type": "password", "password": { "env": "SHELLPORT_HOST_PASSWORD" } },
+      "hostKeyFingerprints": ["SHA256:REPLACE_WITH_OUTPUT_OF_ssh-keyscan_|_ssh-keygen_-lf_-"]
+    }
+  ]
+}

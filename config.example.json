@@ -1,0 +1,45 @@
+{
+  "server": {
+    "port": 8080,
+    "host": "127.0.0.1",
+    "publicUrl": "https://ssh.example.com",
+    "trustProxy": 1
+  },
+  "github": {
+    "clientId": "Iv1.0123456789abcdef",
+    "clientSecret": { "env": "SHELLPORT_GITHUB_SECRET" }
+  },
+  "users": [
+    { "github": 12345678, "totpSecret": { "env": "SHELLPORT_TOTP_USER" } }
+  ],
+  "session": { "ttlHours": 12 },
+  "limits": {
+    "maxTerminalsPerUser": 10,
+    "idleTimeoutMinutes": 30,
+    "loginAttemptsPer15Min": 30
+  },
+  "security": { "allowUnpinnedHostKeys": false },
+  "hosts": [
+    {
+      "id": "prod-web-01",
+      "name": "prod-web-01",
+      "group": "Production",
+      "tag": "ubuntu",
+      "host": "10.0.1.12",
+      "username": "deploy",
+      "auth": { "type": "key", "privateKey": { "file": "keys/shellport_ed25519" } },
+      "hostKeyFingerprints": ["SHA256:uN3k0p7bXz2QeV1sR8m4jH6tY9wC5aLd0fG/kE2rTqM"]
+    },
+    {
+      "id": "pi",
+      "name": "raspberrypi",
+      "group": "Home lab",
+      "tag": "arm64",
+      "host": "192.168.1.40",
+      "username": "pi",
+      "auth": { "type": "password", "password": { "env": "SHELLPORT_PI_PASSWORD" } },
+      "hostKeyFingerprints": ["SHA256:REPLACE_ME_with_output_of_ssh-keyscan_piped_to_ssh-keygen_-lf"],
+      "allowedUsers": [12345678]
+    }
+  ]
+}

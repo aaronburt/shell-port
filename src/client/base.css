@@ -1,0 +1,36 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/bricolage-grotesque/700.css";
+
+:root {
+  --bg: #11151b; --panel: #171c24; --panel-2: #1d2430; --line: #2a3340;
+  --fg: #dde3ea; --muted: #8592a3; --accent: #f0a640; --accent-ink: #1a1206;
+  --ok: #4cc38a; --warn: #e6b450; --bad: #ef6b6b;
+  --term-bg: #0b0e13; --term-fg: #cfd8e3;
+  --f-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --f-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #eef1f5; --panel: #ffffff; --panel-2: #f4f6f9; --line: #d8dee6;
+    --fg: #18202b; --muted: #5d6b7c; --accent: #b86a00; --accent-ink: #ffffff;
+    --ok: #1f9a5f; --warn: #a87400; --bad: #c83b3b; color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-ui); font-size: 14px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.logo { width: 28px; height: 28px; border-radius: 7px; background: #f0a640; display: grid; place-items: center; color: #1a1206; font-family: var(--f-mono); font-weight: 700; font-size: 14px; flex: none; }
+.logo.big { width: 48px; height: 48px; border-radius: 12px; font-size: 20px; }
+.btn { border: 0; border-radius: 8px; padding: 11px 14px; font-weight: 600; background: var(--accent); color: var(--accent-ink); text-decoration: none; }
+.tool { border: 0; background: transparent; color: var(--muted); padding: 0 10px; display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.tool:hover { color: var(--fg); }
+.tool svg { width: 15px; height: 15px; }

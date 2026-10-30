@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Verify · Shellport</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/login.css">
+</head>
+<body>
+<main class="gate">
+  <div class="gate-col">
+    <span class="logo big">&gt;_</span>
+    <h1>Two-factor authentication</h1>
+    <p class="gate-error" id="error" role="alert" hidden></p>
+    <form class="gate-box" id="form" autocomplete="off">
+      <label class="field" for="code">Enter the 6-digit code from your authenticator app for <b id="who"></b>.</label>
+      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" autofocus required>
+      <button class="btn" type="submit" id="go">Verify</button>
+    </form>
+    <p class="gate-note"><a href="#" id="cancel">Cancel and sign out</a></p>
+  </div>
+</main>
+<script src="/assets/totp.js"></script>
+</body>
+</html>

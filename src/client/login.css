@@ -1,0 +1,16 @@
+@import "./base.css";
+body { display: flex; flex-direction: column; }
+.gate { flex: 1; overflow: auto; display: flex; flex-direction: column; align-items: center; padding: 40px 16px 24px; }
+.gate-col { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.gate h1 { font-weight: 400; font-size: 24px; letter-spacing: -.01em; margin: 4px 0 0; text-align: center; }
+.gate-box { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.primary-gh { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.primary-gh svg { width: 18px; height: 18px; }
+.gate-note { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; text-align: center; font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0; }
+.gate-error { width: 100%; margin: 0; padding: 12px 14px; border-radius: 8px; font-size: 13px; line-height: 1.5;
+  background: color-mix(in srgb, var(--bad) 14%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); }
+.field { font-size: 13px; line-height: 1.5; color: var(--muted); }
+.field b { color: var(--fg); font-weight: 500; }
+.gate-box input { background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 12px; font: 500 22px var(--f-mono); letter-spacing: .3em; text-align: center; color: var(--fg); width: 100%; }
+.gate-box .btn { cursor: pointer; }
+.gate-note a { color: var(--accent); text-decoration: none; }

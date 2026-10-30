@@ -1,0 +1,21 @@
+services:
+  shellport:
+    depends_on:
+      - demo-ssh
+      - demo-ssh-locked
+  demo-ssh:
+    build: ./demo-ssh
+    restart: unless-stopped
+    volumes:
+      - demo_ssh_hostkeys:/hostkeys
+  demo-ssh-locked:
+    build:
+      context: ./demo-ssh
+      args:
+        AUTHORIZED_KEYS: authorized_keys.locked
+    restart: unless-stopped
+    volumes:
+      - demo_ssh_locked_hostkeys:/hostkeys
+volumes:
+  demo_ssh_hostkeys:
+  demo_ssh_locked_hostkeys:

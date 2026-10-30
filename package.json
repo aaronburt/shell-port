@@ -1,0 +1,44 @@
+{
+  "name": "shellport",
+  "version": "0.1.0",
+  "description": "Browser-based SSH client: xterm.js over WebSocket to a server-side SSH proxy, GitHub sign-in, hosts preconfigured in config.json.",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/server.js",
+    "totp": "npm run build && node dist/totp-cli.js",
+    "typecheck": "tsc -p .",
+    "demo:setup": "node scripts/demo-setup.mjs",
+    "test": "npm run build && esbuild test/e2e.test.ts test/unit.test.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outdir=.test-build --out-extension:.js=.mjs && node --test .test-build/e2e.test.mjs .test-build/unit.test.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:full": "npm run build && esbuild test/smoke/full.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=.test-build/smoke-full.mjs && node --test --test-timeout=240000 .test-build/smoke-full.mjs"
+  },
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "cookie": "^1.1.1",
+    "express": "^5.3.0",
+    "qrcode": "^1.5.4",
+    "ssh2": "^1.17.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@fontsource/bricolage-grotesque": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.64.1",
+    "typescript": "^5.9.3"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  }
+}

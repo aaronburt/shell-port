@@ -1,0 +1,14 @@
+node_modules
+dist
+.test-build
+.git
+.github
+.env
+.env.*
+config.json
+keys
+*.passphrase
+totp-qr.png
+demo-ssh
+deploy
+docker-compose*.yml
