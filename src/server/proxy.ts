@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import ssh2, { Client, type ConnectConfig, type ClientChannel } from "ssh2";
+import { Client, type ConnectConfig, type ClientChannel } from "ssh2";
 import type { Socket } from "node:net";
 import type { WebSocket, RawData } from "ws";
 import { resolveSecret, hostNeedsPassphrase, type HostConfig, type LoadedConfig } from "./config.js";
@@ -258,13 +258,18 @@ export function openTerminal(opts: {
     if (!value || value.length > MAX_PASSPHRASE_LEN) return failPassphrase(false);
     awaitingPassphrase = false;
     clearTimeout(passphraseTimer);
-    const parsed = ssh2.utils.parseKey(keyText!, value);
-    const key = Array.isArray(parsed) ? parsed[0] : parsed;
-    if (key instanceof Error || !key) return failPassphrase(true);
     conn.privateKey = keyText;
     conn.passphrase = value;
+    try {
+      ssh.connect(conn);
+    } catch (e) {
+      conn.passphrase = undefined;
+      if (/^Cannot parse privateKey/.test((e as Error).message)) return failPassphrase(true);
+      audit("terminal.error", { ...auditBase, error: (e as Error).message });
+      send({ t: "error", message: "SSH connection failed." });
+      return close("Connection failed");
+    }
     send({ t: "status", state: "connecting" });
-    ssh.connect(conn);
     conn.passphrase = undefined;
     keyText = undefined;
   }
