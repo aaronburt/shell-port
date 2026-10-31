@@ -127,6 +127,11 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .15s ease; }
 .switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--accent-ink); }
+.acct-zoom { margin-top: 16px; }
+.stepper { display: flex; align-items: center; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.stepper .tool { border-radius: 0; min-width: 34px; height: 30px; padding: 0 8px; font-size: 15px; }
+.stepper .tool:disabled { opacity: .4; cursor: default; }
+.stepper .zoom-val { min-width: 56px; font-size: 12.5px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .acct .kv { padding: 0; gap: 8px 16px; }
 .acct-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px; }
 .acct-foot .btn { padding: 9px 16px; cursor: pointer; }

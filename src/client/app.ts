@@ -516,6 +516,28 @@ function setHideAddr(hide: boolean, remember = true) {
   if (remember) { try { localStorage.setItem("sp.hideAddr", hide ? "1" : "0"); } catch {} }
 }
 
+const ZOOM_STEPS = [90, 100, 110, 120, 130, 140, 150];
+
+function setZoom(pct: number, remember = true) {
+  const i = ZOOM_STEPS.includes(pct) ? ZOOM_STEPS.indexOf(pct) : ZOOM_STEPS.indexOf(100);
+  const value = ZOOM_STEPS[i];
+  document.documentElement.style.zoom = value === 100 ? "" : String(value / 100);
+  $("zoom-reset").textContent = `${value}%`;
+  $<HTMLButtonElement>("zoom-out").disabled = i === 0;
+  $<HTMLButtonElement>("zoom-in").disabled = i === ZOOM_STEPS.length - 1;
+  if (remember) { try { localStorage.setItem("sp.zoom", String(value)); } catch {} }
+  requestAnimationFrame(() => { for (const t of tabs) if (t === active && t.mode !== "files") t.fit.fit(); });
+}
+
+function stepZoom(dir: number) {
+  const cur = ZOOM_STEPS.indexOf(Number($("zoom-reset").textContent!.replace("%", "")));
+  setZoom(ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, cur + dir))]);
+}
+
+$("zoom-out").onclick = () => stepZoom(-1);
+$("zoom-in").onclick = () => stepZoom(1);
+$("zoom-reset").onclick = () => setZoom(100);
+
 addrToggle.onclick = () => setHideAddr(addrToggle.getAttribute("aria-checked") !== "true");
 
 accountBtn.onclick = () => acct.showModal();
@@ -608,6 +630,7 @@ $("close-session").onclick = () => {
     if (localStorage.getItem("sp.rail") === "0" && !matchMedia("(max-width: 760px)").matches) toggleRail();
     if (localStorage.getItem("sp.drawer") === "0") setDrawer(false);
     if (localStorage.getItem("sp.hideAddr") === "1") setHideAddr(true, false);
+    setZoom(Number(localStorage.getItem("sp.zoom")) || 100, false);
   } catch {}
   if (matchMedia("(max-width: 900px)").matches) setDrawer(false, false);
   const [me, hs] = await Promise.all([api<Me>("/api/me"), api<Host[]>("/api/hosts")]);
