@@ -16,6 +16,10 @@ The screenshots show a local instance with demo hosts and a demo account. No rea
 
 ## Screens
 
+Shellport follows your system's light or dark setting. Dark is the default, and light applies when your system prefers light. There is no in-app switch.
+
+### Light theme
+
 <table>
   <tr>
     <td width="50%">
@@ -40,6 +44,34 @@ The screenshots show a local instance with demo hosts and a demo account. No rea
 </table>
 
 <img src="docs/screenshots/06-phone-workspace.png" alt="Terminal on a phone-sized screen" width="260"><br>
+<sub>The terminal on a phone</sub>
+
+### Dark theme
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/dark/01-sign-in.png" alt="Dark sign-in page with a Continue with GitHub button"><br>
+      <sub>Sign in with GitHub</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/dark/02-two-factor.png" alt="Dark two-factor page asking for a six-digit code"><br>
+      <sub>Enter the code from your authenticator app</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/dark/04-passphrase-prompt.png" alt="Dark terminal tab asking for a key passphrase"><br>
+      <sub>Passphrase prompt for a protected key</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/dark/05-account-modal.png" alt="Dark account dialog with the display switch, keyboard shortcuts and sign out"><br>
+      <sub>Account dialog, with shortcuts and sign out</sub>
+    </td>
+  </tr>
+</table>
+
+<img src="docs/screenshots/dark/06-phone-workspace.png" alt="Terminal on a phone-sized screen, dark theme" width="260"><br>
 <sub>The terminal on a phone</sub>
 
 ## Quick start with Docker
