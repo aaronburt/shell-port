@@ -77,6 +77,9 @@ export function openTerminal(opts: {
   let passphraseTimer: NodeJS.Timeout | undefined;
   let drainTimer: NodeJS.Timeout | undefined;
   let inputPaused = false;
+  let connectStart = 0;
+  const phases: Record<string, number> = {};
+  const mark = (name: string) => { phases[name] = Date.now() - connectStart; };
 
   const ssh = new Client();
   const auditBase = { user: session.login, host: host.id, ip };
@@ -139,17 +142,20 @@ export function openTerminal(opts: {
 
   let cipher = "";
   ssh.on("handshake", (n) => {
+    mark("handshakeMs");
     cipher = n.cs.cipher;
   });
 
   ssh.on("ready", () => {
+    mark("authMs");
     ssh.shell({ term: "xterm-256color", ...size }, (err, s) => {
       if (err) {
         send({ t: "error", message: "The host refused to open a shell." });
         return close("Shell refused");
       }
       stream = s;
-      audit("terminal.open", auditBase);
+      mark("shellMs");
+      audit("terminal.open", { ...auditBase, ...phases });
       send({
         t: "status",
         state: "connected",
@@ -260,6 +266,7 @@ export function openTerminal(opts: {
     clearTimeout(passphraseTimer);
     conn.privateKey = keyText;
     conn.passphrase = value;
+    connectStart = Date.now();
     try {
       ssh.connect(conn);
     } catch (e) {
@@ -269,6 +276,7 @@ export function openTerminal(opts: {
       send({ t: "error", message: "SSH connection failed." });
       return close("Connection failed");
     }
+    mark("decryptMs");
     send({ t: "status", state: "connecting" });
     conn.passphrase = undefined;
     keyText = undefined;
@@ -276,7 +284,11 @@ export function openTerminal(opts: {
 
   send({ t: "status", state: "connecting" });
   if (needsPassphrase) askPassphrase(false);
-  else ssh.connect(conn);
+  else {
+    connectStart = Date.now();
+    ssh.connect(conn);
+    mark("connectCallMs");
+  }
 
   return { user: session.login, hostId: host.id, close };
 }
