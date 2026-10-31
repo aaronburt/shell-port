@@ -10,28 +10,28 @@
 </head>
 <body>
 <section class="ws" id="ws">
-  <aside class="rail" aria-label="Hosts">
-    <div class="rail-top">
+  <div class="tabs" role="tablist" id="tabs">
+    <div class="tab-search">
       <button class="tool rail-toggle" id="rail-toggle" aria-label="Toggle sidebar" aria-expanded="true" title="Toggle sidebar (Ctrl/⌘ B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
       <label class="search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="host-search" placeholder="Search hosts" aria-label="Search hosts" autocomplete="off"></label>
     </div>
+    <div class="tab-scroll" id="tab-scroll"></div>
+    <div class="tab-tools">
+      <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+    </div>
+  </div>
+
+  <aside class="rail" aria-label="Hosts">
     <div class="hosts" id="hosts"></div>
     <div class="rail-foot">
       <div class="me">
-        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false" aria-controls="umenu" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
+        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" aria-haspopup="dialog" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
         <span class="who"><small id="me-login"></small></span>
       </div>
     </div>
   </aside>
 
   <div class="main">
-    <div class="tabs" role="tablist" id="tabs">
-      <button class="tool menu-btn" id="menu-btn" aria-label="Show hosts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-      <div class="tab-scroll" id="tab-scroll"></div>
-      <div class="tab-tools">
-        <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
-      </div>
-    </div>
     <div class="term-wrap">
       <div class="terms" id="terms">
         <div class="empty" id="empty">
@@ -40,23 +40,42 @@
         </div>
       </div>
       <aside class="drawer" id="drawer" aria-label="Session details">
-        <div class="drawer-head"><h5>Session</h5></div>
-        <dl class="kv" id="kv"></dl>
-        <div class="drawer-head split"><h5>Sign-ins</h5><button class="tool" id="signout-others" hidden>Sign out others</button></div>
-        <div class="acts" id="signins"></div>
+        <div class="drawer-body">
+          <div class="drawer-head split"><h5>Session</h5><button class="tool" id="close-session" hidden>Close session</button></div>
+          <dl class="kv" id="kv"></dl>
+          <div class="drawer-head split"><h5>Sign-ins</h5><button class="tool" id="signout-others" hidden>Sign out others</button></div>
+          <div class="acts" id="signins"></div>
+        </div>
       </aside>
     </div>
     <div class="notice" id="notice" role="alert" hidden></div>
-    <div class="status" id="status"></div>
   </div>
 </section>
 
-<div class="umenu" id="umenu" role="menu" aria-label="Account menu" hidden>
-  <div class="umenu-head" id="umenu-login"></div>
-  <h5>Shortcuts</h5>
-  <dl class="kv keys" id="keys"></dl>
-  <button class="umenu-item" id="umenu-signout" role="menuitem">Sign out</button>
-</div>
+<dialog class="acct" id="acct" aria-labelledby="acct-title">
+  <div class="acct-body">
+    <header class="acct-head">
+      <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
+      <div><h3 id="acct-title"></h3><small>Signed in with GitHub</small></div>
+      <button class="tool acct-x" id="acct-x" type="button" aria-label="Close account">×</button>
+    </header>
+    <section class="acct-sec">
+      <h5>Display</h5>
+      <div class="acct-row">
+        <div><strong id="addr-label">Hide host addresses</strong><small>Hide the user@host line under each host in the sidebar.</small></div>
+        <button class="switch" id="addr-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="addr-label"></button>
+      </div>
+    </section>
+    <section class="acct-sec">
+      <h5>Shortcuts</h5>
+      <dl class="kv keys" id="keys"></dl>
+    </section>
+    <footer class="acct-foot">
+      <button class="btn ghost" id="acct-close" type="button">Close</button>
+      <button class="btn" id="acct-signout" type="button">Sign out</button>
+    </footer>
+  </div>
+</dialog>
 
 <div class="scrim" id="signout-scrim" hidden>
   <div class="modal" id="signout-dialog" role="alertdialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-text">

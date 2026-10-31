@@ -53,10 +53,10 @@ This generates keys, starts two demo SSH servers (unencrypted and passphrase-pro
 
 ## Using the interface
 
-- **Sidebar:** search your hosts, click one to open a terminal, or use the **+** that appears on a host row (on hover or keyboard focus) to open another session of the same host. The toggle beside the search box collapses the sidebar to a narrow strip.
-- **Account menu:** the avatar at the bottom of the sidebar opens a menu with your login, the keyboard shortcuts and **Sign out**. Signing out asks for confirmation first, because it disconnects your open terminals.
-- **Session details:** the panel on the right of the tab bar shows the connection details and your recent sign-ins, and can sign out your other sessions.
-- **Status bar:** the connection state on the left, then the encoding, terminal type and size.
+- **Tab bar:** the sidebar toggle and the host search box sit together in one tab at the left of a full-width tab bar. The toggle is coloured while the sidebar is open. Each session is a tab 200px wide (shrinking to 120px only when the bar is full), and you can drag tabs to reorder them.
+- **Sidebar:** click a host to open a terminal, or use the **+** that appears on a host row (on hover or keyboard focus) to open another session of the same host.
+- **Session panel:** the panel on the right of the tab bar slides in and out and shows the connection details and your recent sign-ins. **Close session** at the top closes the active tab (tabs have no close cross), and **Sign out others** ends your other sessions. On a phone the panel opens over the terminal.
+- **Account:** the avatar at the bottom of the sidebar opens a centred account modal with your login, a **Hide host addresses** switch (kept in this browser only), the keyboard shortcuts, **Close** and **Sign out**. Signing out asks for confirmation first, because it disconnects your open terminals.
 
 ## Configuration
 

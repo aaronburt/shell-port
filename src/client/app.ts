@@ -108,39 +108,71 @@ function toggleRail() {
   setTimeout(() => active?.fit.fit(), 200);
 }
 $("rail-toggle").onclick = () => { toggleRail(); active?.term.focus(); };
-$("menu-btn").onclick = toggleRail;
 function showRail() {
   const ws = $("ws");
   if (matchMedia("(max-width: 760px)").matches) ws.classList.add("rail-open");
   else if (ws.classList.contains("collapsed")) toggleRail();
 }
 
-function toggleDrawer() {
-  const d = $("drawer");
-  d.hidden = !d.hidden;
-  $("drawer-toggle").setAttribute("aria-pressed", String(!d.hidden));
-  try { localStorage.setItem("sp.drawer", d.hidden ? "0" : "1"); } catch {}
+function setDrawer(open: boolean, remember = true) {
+  $("drawer").classList.toggle("closed", !open);
+  $("drawer-toggle").setAttribute("aria-pressed", String(open));
+  if (remember) { try { localStorage.setItem("sp.drawer", open ? "1" : "0"); } catch {} }
   active?.fit.fit();
+}
+
+function toggleDrawer() {
+  setDrawer($("drawer").classList.contains("closed"));
 }
 $("drawer-toggle").onclick = () => { toggleDrawer(); active?.term.focus(); };
 
 function renderTabs() {
   const el = $("tab-scroll");
   el.innerHTML = tabs.map((t) => `
-    <button role="tab" aria-selected="${t === active}" class="tab ${t === active ? "active" : ""}" data-tab="${t.key}" title="${esc(t.host.addr)}">
-      <span class="dot ${t.state === "connected" ? "" : t.state}"></span>${esc(t.title)}
-      <span class="x" role="button" aria-label="Close tab" data-close="${t.key}">×</span>
+    <button role="tab" aria-selected="${t === active}" class="tab ${t === active ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${t.state}" title="${esc(t.host.addr)}">
+      <span class="dot ${t.state === "connected" ? "" : t.state}"></span><span class="name">${esc(t.title)}</span>
     </button>`).join("");
   el.querySelector(".tab.active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
   $("empty").hidden = tabs.length > 0;
 }
 
+const tabOf = (e: Event) => (e.target as HTMLElement).closest<HTMLElement>("[data-tab]");
+let dragKey: string | undefined;
+
 $("tab-scroll").addEventListener("click", (e) => {
-  const t = e.target as HTMLElement;
-  const close = t.closest<HTMLElement>("[data-close]");
-  if (close) { closeTab(tabs.find((x) => x.key === close.dataset.close)!); return; }
-  const tab = tabs.find((x) => x.key === t.closest<HTMLElement>("[data-tab]")?.dataset.tab);
+  const tab = tabs.find((x) => x.key === tabOf(e)?.dataset.tab);
   if (tab) activate(tab);
+});
+$("tab-scroll").addEventListener("dragstart", (e) => {
+  const el = tabOf(e);
+  if (!el || !e.dataTransfer) return;
+  dragKey = el.dataset.tab;
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", dragKey ?? "");
+  el.classList.add("dragging");
+});
+$("tab-scroll").addEventListener("dragover", (e) => {
+  if (!dragKey || !tabOf(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+});
+$("tab-scroll").addEventListener("drop", (e) => {
+  const target = tabOf(e);
+  const from = tabs.findIndex((x) => x.key === dragKey);
+  dragKey = undefined;
+  if (!target || from < 0) return;
+  e.preventDefault();
+  const targetKey = target.dataset.tab;
+  if (targetKey === tabs[from].key) return;
+  const [moved] = tabs.splice(from, 1);
+  const to = tabs.findIndex((x) => x.key === targetKey);
+  const r = target.getBoundingClientRect();
+  tabs.splice(e.clientX > r.left + r.width / 2 ? to + 1 : to, 0, moved);
+  renderTabs();
+});
+$("tab-scroll").addEventListener("dragend", () => {
+  dragKey = undefined;
+  $("tab-scroll").querySelector(".dragging")?.classList.remove("dragging");
 });
 $("tab-scroll").addEventListener("auxclick", (e) => {
   if (e.button !== 1) return;
@@ -182,7 +214,6 @@ function openTab(h: Host) {
   term.onBinary((d) => send(tab, Uint8Array.from(d, (c) => c.charCodeAt(0))));
   term.onResize(({ cols, rows }) => {
     if (tab.ws?.readyState === WebSocket.OPEN) tab.ws.send(JSON.stringify({ t: "resize", cols, rows }));
-    if (tab === active) renderStatus();
   });
   new ResizeObserver(() => { if (tab === active) fit.fit(); }).observe(pane);
 
@@ -276,13 +307,12 @@ function showBanner(tab: Tab) {
 function refresh(tab: Tab) {
   renderTabs();
   renderHosts();
-  if (tab === active) { renderStatus(); renderDrawer(); }
+  if (tab === active) renderDrawer();
 }
 
 function renderAll() {
   renderTabs();
   renderHosts();
-  renderStatus();
   renderDrawer();
 }
 
@@ -306,13 +336,6 @@ function closeTab(tab: Tab) {
     if (active) return activate(active);
   }
   renderAll();
-}
-
-function renderStatus() {
-  const t = active;
-  if (!t) { $("status").innerHTML = `<span>No session</span>`; return; }
-  const st = t.state === "connected" ? `<span class="ok">● connected</span>` : t.state === "connecting" ? `<span class="warn">● connecting</span>` : `<span class="bad">● closed</span>`;
-  $("status").innerHTML = `${st}<span class="sep"></span><span>UTF-8</span><span>xterm-256color</span><span>${t.term.cols}×${t.term.rows}</span>`;
 }
 
 const fmtTime = (ms: number) =>
@@ -374,6 +397,7 @@ $("signout-others").onclick = async () => {
 
 function renderDrawer() {
   const t = active;
+  $("close-session").hidden = !t;
   const key = `${t?.host.id ?? ""}|${t?.state ?? ""}`;
   if (key !== signinsKey) { signinsKey = key; loadSignins(t?.host.id); }
   const i = t?.info;
@@ -438,43 +462,26 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 const accountBtn = $("account-btn");
-const umenu = $("umenu");
+const acct = $<HTMLDialogElement>("acct");
 const scrim = $("signout-scrim");
+const addrToggle = $("addr-toggle");
 
-function openMenu() {
-  const r = accountBtn.getBoundingClientRect();
-  umenu.hidden = false;
-  umenu.style.left = `${Math.min(Math.max(8, r.left), Math.max(8, innerWidth - umenu.offsetWidth - 8))}px`;
-  umenu.style.bottom = `${innerHeight - r.top + 8}px`;
-  accountBtn.setAttribute("aria-expanded", "true");
-  $("umenu-signout").focus();
+function setHideAddr(hide: boolean, remember = true) {
+  $("ws").classList.toggle("hide-addr", hide);
+  addrToggle.setAttribute("aria-checked", String(hide));
+  if (remember) { try { localStorage.setItem("sp.hideAddr", hide ? "1" : "0"); } catch {} }
 }
 
-function closeMenu(returnFocus = false) {
-  if (umenu.hidden) return;
-  umenu.hidden = true;
-  accountBtn.setAttribute("aria-expanded", "false");
-  if (returnFocus) accountBtn.focus();
-}
+addrToggle.onclick = () => setHideAddr(addrToggle.getAttribute("aria-checked") !== "true");
 
-accountBtn.onclick = () => (umenu.hidden ? openMenu() : closeMenu(true));
-
-document.addEventListener("pointerdown", (e) => {
-  const target = e.target as Node;
-  if (!umenu.hidden && !umenu.contains(target) && !accountBtn.contains(target)) closeMenu();
-});
-
-umenu.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeMenu(true);
-  } else if (e.key === "Tab") {
-    closeMenu();
-  }
+accountBtn.onclick = () => acct.showModal();
+$("acct-x").onclick = () => acct.close();
+$("acct-close").onclick = () => acct.close();
+acct.addEventListener("click", (e) => {
+  if (e.target === acct) acct.close();
 });
 
 function openSignOutDialog() {
-  closeMenu();
   scrim.hidden = false;
   $("signout-cancel").focus();
 }
@@ -485,7 +492,10 @@ function closeSignOutDialog() {
   accountBtn.focus();
 }
 
-$("umenu-signout").onclick = openSignOutDialog;
+$("acct-signout").onclick = () => {
+  acct.close();
+  openSignOutDialog();
+};
 $("signout-cancel").onclick = closeSignOutDialog;
 scrim.addEventListener("pointerdown", (e) => {
   if (e.target === scrim) closeSignOutDialog();
@@ -525,29 +535,37 @@ function initialsOf(name: string, login: string): string {
 }
 
 function renderMe(me: Me) {
-  const img = $<HTMLImageElement>("me-avatar");
-  const initials = $("me-initials");
-  initials.textContent = initialsOf(me.name, me.login);
-  $("me-login").textContent = me.login;
-  $("umenu-login").textContent = me.login;
-  if (me.avatarUrl && me.avatarUrl.startsWith("https://avatars.githubusercontent.com/")) {
-    img.src = me.avatarUrl;
-    img.hidden = false;
-    initials.hidden = true;
-  } else {
-    img.hidden = true;
-    initials.hidden = false;
+  const avatar = me.avatarUrl && me.avatarUrl.startsWith("https://avatars.githubusercontent.com/") ? me.avatarUrl : "";
+  for (const [imgId, initialsId] of [["me-avatar", "me-initials"], ["acct-avatar-img", "acct-initials"]]) {
+    const img = $<HTMLImageElement>(imgId);
+    const initials = $(initialsId);
+    initials.textContent = initialsOf(me.name, me.login);
+    img.onerror = () => {
+      img.hidden = true;
+      initials.hidden = false;
+    };
+    if (avatar) img.src = avatar;
+    img.hidden = !avatar;
+    initials.hidden = !!avatar;
   }
+  $("me-login").textContent = me.login;
+  $("acct-title").textContent = me.login;
   setInterval(() => {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
 }
 
+$("close-session").onclick = () => {
+  if (active) closeTab(active);
+};
+
 (async () => {
   try {
     if (localStorage.getItem("sp.rail") === "0" && !matchMedia("(max-width: 760px)").matches) toggleRail();
-    if (localStorage.getItem("sp.drawer") === "0") toggleDrawer();
+    if (localStorage.getItem("sp.drawer") === "0") setDrawer(false);
+    if (localStorage.getItem("sp.hideAddr") === "1") setHideAddr(true, false);
   } catch {}
+  if (matchMedia("(max-width: 900px)").matches) setDrawer(false, false);
   const [me, hs] = await Promise.all([api<Me>("/api/me"), api<Host[]>("/api/hosts")]);
   hosts = hs;
   renderMe(me);
