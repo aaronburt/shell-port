@@ -102,7 +102,7 @@ before(async () => {
       exchange: async (c) => {
         const id = USERS[c];
         if (!id) throw new Error("unknown smoke user");
-        return { id, login: c, name: c };
+        return { id, login: c, name: c, avatarUrl: "https://avatars.githubusercontent.com/u/1" };
       },
     });
     try {
@@ -542,7 +542,7 @@ test("UI: GitHub sign-in, TOTP page, wrong then right code, session rotation", a
   uiCtx = await newContext("ui-user");
   ui = await uiSignIn(uiCtx);
   assert.equal(await ui.locator("#me-login").innerText(), "ui-user");
-  assert.equal(await ui.locator("#me-initials").innerText(), "UI");
+  assert.equal(await ui.locator("#me-avatar").getAttribute("src"), "https://avatars.githubusercontent.com/u/1");
 });
 
 test("UI: the sidebar top row is the toggle and search only, and the tab bar has no plus button", async () => {
@@ -563,8 +563,9 @@ test("UI: the sidebar footer is pinned to the bottom and shows only the avatar a
   const rail = await ui.locator(".rail").boundingBox();
   const box = await foot.boundingBox();
   assert.ok(rail && box && Math.abs(rail.y + rail.height - (box.y + box.height)) < 2, "the footer touches the bottom of the sidebar");
-  assert.equal(flatten(await foot.innerText()), "UI ui-user");
-  assert.equal(await foot.locator("img, svg, button:not(#account-btn)").count(), 0);
+  assert.equal(flatten(await foot.innerText()), "ui-user");
+  assert.equal(await foot.locator("svg, button:not(#account-btn)").count(), 0);
+  assert.equal(await foot.locator("#account-btn #me-avatar").count(), 1);
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "menu");
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-label"), "Account menu");
   assert.equal(await ui.locator("#signout").count(), 0);

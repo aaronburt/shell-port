@@ -5,7 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { feedPassphrase } from "./passphrase.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { login: string; name: string; expiresAt: number }
+interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -525,9 +525,19 @@ function initialsOf(name: string, login: string): string {
 }
 
 function renderMe(me: Me) {
-  $("me-initials").textContent = initialsOf(me.name, me.login);
+  const img = $<HTMLImageElement>("me-avatar");
+  const initials = $("me-initials");
+  initials.textContent = initialsOf(me.name, me.login);
   $("me-login").textContent = me.login;
   $("umenu-login").textContent = me.login;
+  if (me.avatarUrl && me.avatarUrl.startsWith("https://avatars.githubusercontent.com/")) {
+    img.src = me.avatarUrl;
+    img.hidden = false;
+    initials.hidden = true;
+  } else {
+    img.hidden = true;
+    initials.hidden = false;
+  }
   setInterval(() => {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
