@@ -1,92 +1,165 @@
 # Shellport
 
-A lightweight, browser-based SSH client with GitHub sign-in, TOTP, and preconfigured hosts.
+Shellport is a browser-based SSH client, like PuTTY hosted on a web server. Sign in with GitHub, confirm with an authenticator code, and open a terminal on the hosts an administrator has set up.
 
-Runs [xterm.js](https://xtermjs.org/) in the browser connected over WebSocket to a server-side SSH proxy (`ssh2` + `ws`). Host credentials stay on the server—users cannot create arbitrary connections or export private keys.
+![Shellport workspace with the host list, a terminal and the session panel](docs/screenshots/03-workspace.png)
 
-## Quickstart (Docker)
+The screenshots show a local instance with demo hosts and a demo account. No real hosts, keys or identities appear in them.
 
-```sh
-cp config.local.example.json config.json
-cp .env.example .env
-mkdir -p keys
+## Features
 
-# Generate a TOTP secret for your user
-docker compose run --rm --no-deps --entrypoint node shellport dist/totp-cli.js <github-login>
+- **GitHub sign-in plus a one-time code.** Only GitHub accounts listed in `config.json` can get in, and each needs a time-based code from an authenticator app. A code can't be used twice.
+- **Preconfigured hosts only.** Administrators define hosts, credentials and pinned host keys on the server. Users pick a host from the list. They can't add connections or see private keys.
+- **Passphrases typed in the browser.** If a key is passphrase-protected, the terminal asks for the passphrase when you connect. It is never stored or logged.
+- **Tabs and sessions.** Open several sessions to the same host, drag tabs to reorder them, and check your recent sign-ins in the session panel.
+- **Works on a phone.** The host list and session panel open over the terminal on small screens.
 
-docker compose up -d --build
-```
+## Screens
 
-Access the client at `http://localhost:8080`.
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/01-sign-in.png" alt="Sign-in page with a Continue with GitHub button"><br>
+      <sub>Sign in with GitHub</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/02-two-factor.png" alt="Two-factor page asking for a six-digit code"><br>
+      <sub>Enter the code from your authenticator app</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/04-passphrase-prompt.png" alt="Terminal tab asking for a key passphrase"><br>
+      <sub>Passphrase prompt for a protected key</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/05-account-modal.png" alt="Account dialog with the display switch, keyboard shortcuts and sign out"><br>
+      <sub>Account dialog, with shortcuts and sign out</sub>
+    </td>
+  </tr>
+</table>
 
-### Web Configuration Generator
+<img src="docs/screenshots/06-phone-workspace.png" alt="Terminal on a phone-sized screen" width="260"><br>
+<sub>The terminal on a phone</sub>
 
-If Shellport is launched without an existing `config.json` (such as running a fresh container), it automatically starts in Setup Mode. Visit `http://localhost:8080` in your browser to use the interactive configuration generator:
+## Quick start with Docker
 
-- Visually configure server networking, GitHub OAuth, session limits, and SSH targets.
-- Generate RFC 6238 Base32 TOTP secrets and scan QR codes directly into your authenticator app.
-- Validate configuration against Shellport's schema.
-- Download `config.json`, copy the JSON payload, or save directly if the container volume is writable.
+You need Docker and a GitHub OAuth app.
 
-For production deployment with automatic HTTPS via Caddy, use `deploy/docker-compose.yml`.
+1. **Create a GitHub OAuth app.** In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**. Set the authorization callback URL to `http://localhost:8080/auth/github/callback`.
 
-## Local Development
+2. **Create your local files.**
 
-```sh
-npm ci
-npm run build
-cp config.example.json config.json
-npm run totp -- <github-login>
-npm start
-```
+   ```sh
+   cp config.local.example.json config.json
+   cp .env.example .env
+   mkdir -p keys
+   ```
 
-### Demo SSH Targets
+3. **Create an authenticator secret for your GitHub login.**
 
-To test Shellport without real SSH servers, spin up the local demo containers:
+   ```sh
+   docker compose run --rm --no-deps --entrypoint node shellport dist/totp-cli.js <github-login>
+   ```
+
+   The command prints a QR code and a secret. Scan the code with your authenticator app. Then put the secret in `.env` as `SHELLPORT_TOTP_USER`, the variable that `config.local.example.json` reads.
+
+4. **Edit `.env` and `config.json`.** In `.env`, set `SHELLPORT_GITHUB_SECRET` to your OAuth client secret. If you keep the example host, also set `SHELLPORT_HOST_PASSWORD`. In `config.json`, set `github.clientId` to your OAuth client ID, and replace the example user with your numeric GitHub ID or login. Then set up your hosts (see [Configuration](#configuration)).
+
+5. **Start Shellport.**
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+   Open `http://localhost:8080` and sign in.
+
+## Try it with demo hosts
+
+To test without real servers, start two demo SSH servers in Docker: one with a plain key and one with a passphrase-protected key. You still need the OAuth app and authenticator secret from the quick start.
 
 ```sh
 npm run demo:setup
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 ```
 
-This generates keys, starts two demo SSH servers (unencrypted and passphrase-protected), and pins their host keys in `config.json`.
+The setup generates the keys, starts the demo servers and pins their host keys in `config.json`. The passphrase for the protected key is saved to `demo-locked.passphrase`.
 
-## Using the interface
+## Production with HTTPS
 
-- **Tab bar:** the sidebar toggle and the host search box sit together in one tab at the left of a full-width tab bar. The toggle is coloured while the sidebar is open. Each session is a tab 200px wide (shrinking to 120px only when the bar is full), and you can drag tabs to reorder them.
-- **Sidebar:** click a host to open a terminal, or use the **+** that appears on a host row (on hover or keyboard focus) to open another session of the same host.
-- **Session panel:** the panel on the right of the tab bar slides in and out and shows the connection details and your recent sign-ins. **Close session** at the top closes the active tab (tabs have no close cross), and **Sign out others** ends your other sessions. On a phone the panel opens over the terminal.
-- **Account:** the avatar at the bottom of the sidebar opens a centred account modal with your login, a **Hide host addresses** switch (kept in this browser only), the keyboard shortcuts, **Close** and **Sign out**. Signing out asks for confirmation first, because it disconnects your open terminals.
+The `deploy/` folder runs Shellport behind Caddy, which handles HTTPS certificates.
+
+1. Set `server.publicUrl` in `config.json` to your HTTPS address, for example `https://ssh.example.com`.
+2. Set the same callback URL on your OAuth app: `https://ssh.example.com/auth/github/callback`.
+3. Copy `config.json`, `.env` and `keys/` into `deploy/`, and set your domain in `deploy/Caddyfile`.
+4. From `deploy/`, run `docker compose up -d`.
 
 ## Configuration
 
-Settings are defined in `config.json` (see [`config.example.json`](config.example.json)). Secrets can be literal strings, `{ "env": "VAR_NAME" }`, or `{ "file": "path/to/file" }`.
+Shellport reads `config.json`. Start from [`config.example.json`](config.example.json). A secret can be a plain string, `{ "env": "VAR_NAME" }` or `{ "file": "path/to/file" }`. Prefer the `env` or `file` forms so secrets stay out of `config.json`.
 
-| Section | Description |
+| Section | What it controls |
 | --- | --- |
-| `server` | Port, listen host, `publicUrl` (origin used for OAuth redirects and WebSocket checks), and `trustProxy`. |
-| `github` | OAuth application credentials (`clientId`, `clientSecret`). |
-| `users` | Allowlist of users by numeric GitHub ID or login, each with a required `totpSecret`. |
-| `hosts` | Preconfigured SSH destinations with credentials, pinned host keys (`hostKeyFingerprints`), and optional `allowedUsers`. |
-| `limits` | Concurrency and rate limits (`maxTerminalsPerUser`, `idleTimeoutMinutes`, `loginAttemptsPer15Min`). |
+| `server` | Port, listen address, `publicUrl` (the origin used for OAuth redirects and WebSocket checks) and `trustProxy`. |
+| `github` | OAuth app `clientId` and `clientSecret`. |
+| `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. |
+| `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints` and optional `allowedUsers`. |
+| `limits` | Terminals per user, idle timeout and sign-in attempts per 15 minutes. |
+| `session` | How long a sign-in lasts (`ttlHours`). |
+| `security` | Security options. Leave `allowUnpinnedHostKeys` at `false`. |
 
-### Host Authentication
+To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA256:` fingerprint into `hostKeyFingerprints`. Shellport refuses to connect if the fingerprint changes.
 
-- **Password**: Credential stored on the server via env or file secret.
-- **SSH Key**: Private key stored on the server. If passphrase-protected, the user unlocks it by typing the passphrase in the terminal tab on connect.
+**Host authentication**
+
+- **SSH key:** the private key stays on the server. If the key is passphrase-protected, the user types the passphrase in the terminal tab when connecting.
+- **Password:** stored on the server as an `env` or `file` secret. It is never sent to the browser.
+
+**Setup wizard.** If Shellport starts without a `config.json`, it opens a setup wizard instead of the app. The wizard can configure the server, GitHub OAuth, session limits and SSH hosts. It can also generate TOTP secrets with QR codes, check the config against the schema, and download `config.json`. You can force the wizard with `SHELLPORT_SETUP=1`.
+
+## Using Shellport
+
+- **Tab bar.** The sidebar toggle and the host search box sit at the left. Each session is a tab. Drag tabs to reorder them.
+- **Host list.** Click a host to open a terminal. Hover over a host, or focus it with the keyboard, and click **+** to open another session to the same host.
+- **Session panel.** The panel on the right of the tab bar shows the connection details and your recent sign-ins. **Close session** closes the active tab. **Sign out others** ends your other sessions. Use the toggle in the tab bar to hide the panel.
+- **Account.** Click your avatar for the account dialog. It shows your login, a **Hide host addresses** switch (stored in this browser only), the keyboard shortcuts, and **Sign out**. Signing out asks first, because it disconnects your open terminals.
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl` `Shift` `B` | Toggle the sidebar |
+| `Ctrl` `Shift` `K` | Search hosts |
+| `Ctrl` `Shift` `C` / `V` | Copy / paste |
+| `Alt` `←` / `→` | Previous / next tab |
+
+## Development
+
+You need Node.js 24 or newer.
+
+```sh
+npm ci
+npm run build
+cp config.local.example.json config.json
+cp .env.example .env
+npm run totp -- <github-login>   # put the secret in .env as SHELLPORT_TOTP_USER
+node --env-file=.env dist/server.js
+```
+
+Shellport refuses to start until `.env` has `SHELLPORT_GITHUB_SECRET` and `SHELLPORT_TOTP_USER`, and `SHELLPORT_HOST_PASSWORD` if the example host is still in `config.json`. Then open `http://localhost:8080`. Shellport reads `config.json` from the current folder, or from the path in `SHELLPORT_CONFIG`.
 
 ## Testing
 
 ```sh
-npm test               # Unit and end-to-end test suite
-npm run typecheck      # TypeScript type checking
-npm run smoke -- <url> # Black-box security and header checks against a running instance
-npm run smoke:full     # Isolated end-to-end run: real SSH containers and a headless browser (set SMOKE_SCREENSHOTS=<folder> to save screenshots)
+npm test                 # unit and end-to-end tests
+npm run typecheck        # TypeScript checks
+npm run smoke -- <url>   # black-box security and header checks against a running instance
+npm run smoke:full       # real SSH containers and a headless browser (needs Docker)
 ```
+
+Set `SMOKE_SCREENSHOTS=<folder>` with `npm run smoke:full` to save UI screenshots.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for the threat model and security policy.
+Shellport gives a signed-in user a shell on the hosts they are allowed to reach, so the server and its configuration need to be protected. Read [SECURITY.md](SECURITY.md) for the threat model and for how to report a vulnerability.
 
 ## License
 
