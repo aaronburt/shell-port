@@ -35,9 +35,10 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .hosts .none { color: var(--muted); font-size: 13px; padding: 12px 8px; }
 .rail-foot { flex: none; margin-top: auto; background: var(--panel); border-top: 1px solid var(--line); padding: 10px 12px; }
 .me { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #3b5b7d, #6b8fb3); display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 12px; flex: none; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #3b5b7d, #6b8fb3); display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 12px; flex: none; overflow: hidden; }
 .avatar-btn { border: 0; padding: 0; cursor: pointer; }
 .avatar-btn:hover, .avatar-btn[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--accent); }
+.avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
 .me .who { min-width: 0; display: flex; flex-direction: column; }
 .me .who small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 

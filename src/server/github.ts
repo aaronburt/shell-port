@@ -2,7 +2,10 @@ export interface GitHubUser {
   id: number;
   login: string;
   name: string;
+  avatarUrl?: string;
 }
+
+const AVATAR_PREFIX = "https://avatars.githubusercontent.com/";
 
 export function authorizeUrl(clientId: string, redirectUri: string, state: string): string {
   const u = new URL("https://github.com/login/oauth/authorize");
@@ -39,7 +42,7 @@ export async function exchangeCode(
     signal: AbortSignal.timeout(10_000),
   });
   if (!userRes.ok) throw new Error(`GitHub /user failed: ${userRes.status}`);
-  const u = (await userRes.json()) as { id: number; login: string; name: string | null };
+  const u = (await userRes.json()) as { id: number; login: string; name: string | null; avatar_url?: string };
 
   fetch(`https://api.github.com/applications/${clientId}/token`, {
     method: "DELETE",
@@ -52,5 +55,5 @@ export async function exchangeCode(
     signal: AbortSignal.timeout(10_000),
   }).catch(() => {});
 
-  return { id: u.id, login: u.login, name: u.name || u.login };
+  return { id: u.id, login: u.login, name: u.name || u.login, avatarUrl: u.avatar_url?.startsWith(AVATAR_PREFIX) ? u.avatar_url : "" };
 }
