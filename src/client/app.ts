@@ -251,6 +251,13 @@ function openTab(h: Host) {
   tabs.push(tab);
 
   term.attachCustomKeyEventHandler((e) => handleTermKey(e, tab));
+  // Native copy (context menu, Ctrl+C with a selection in the helper textarea): always copy what xterm has selected.
+  pane.addEventListener("copy", (e) => {
+    const sel = term.getSelection();
+    if (!sel || !e.clipboardData) return;
+    e.clipboardData.setData("text/plain", sel);
+    e.preventDefault();
+  });
   term.onData((d) => (tab.passphrase !== undefined ? typePassphrase(tab, d) : send(tab, new TextEncoder().encode(d))));
   term.onBinary((d) => send(tab, Uint8Array.from(d, (c) => c.charCodeAt(0))));
   term.onResize(({ cols, rows }) => {
@@ -461,13 +468,30 @@ $("keys").innerHTML = [
 ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
+function copyText(text: string) {
+  const legacy = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    const prev = document.activeElement as HTMLElement | null;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch {}
+    ta.remove();
+    prev?.focus();
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(legacy);
+  else legacy();
+}
+
 function handleTermKey(e: KeyboardEvent, tab: Tab): boolean {
   if (e.type !== "keydown") return true;
   const k = e.key.toLowerCase();
   if (!isMac && e.ctrlKey && e.shiftKey && k === "c") {
     const sel = tab.term.getSelection();
-    if (sel) navigator.clipboard?.writeText(sel).catch(() => {});
+    if (sel) copyText(sel);
     e.preventDefault();
+    e.stopPropagation();
     return false;
   }
   if (!isMac && e.ctrlKey && e.shiftKey && k === "v") {
