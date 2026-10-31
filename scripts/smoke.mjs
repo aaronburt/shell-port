@@ -128,6 +128,7 @@ function assertSecurityHeaders(res) {
   expect(d.get("object-src")?.join(" ") === "'none'", "object-src should be 'none'");
   expect(d.get("form-action")?.join(" ") === "'self'", "form-action should be 'self'");
   expect(d.get("connect-src")?.includes("'self'"), "connect-src should include 'self'");
+  expect(d.get("img-src")?.every((v) => v === "'self'" || v === "data:"), `img-src should allow only 'self', got ${d.get("img-src")}`);
   expect(!/unsafe-eval/.test(csp), "CSP must not allow unsafe-eval");
   expect(!d.get("script-src").some((v) => /unsafe-inline|\*|https?:/.test(v)), "script-src must not allow inline or remote scripts");
   expect(d.has("upgrade-insecure-requests") === secure, secure ? "https instance should send upgrade-insecure-requests" : "http instance should not send upgrade-insecure-requests");

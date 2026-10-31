@@ -5,7 +5,6 @@ export interface UserSession {
   githubId: number;
   login: string;
   name: string;
-  avatarUrl: string;
   stage: "totp" | "full";
   totpFailures: number;
   createdAt: number;
@@ -22,7 +21,7 @@ export class SessionStore {
     setInterval(() => this.sweep(), 60_000).unref();
   }
 
-  create(user: { githubId: number; login: string; name: string; avatarUrl: string }, stage: UserSession["stage"]): UserSession {
+  create(user: { githubId: number; login: string; name: string }, stage: UserSession["stage"]): UserSession {
     const now = Date.now();
     const s: UserSession = {
       id: crypto.randomBytes(32).toString("base64url"),
@@ -39,7 +38,7 @@ export class SessionStore {
   promote(pending: UserSession): UserSession {
     this.sessions.delete(pending.id);
     return this.create(
-      { githubId: pending.githubId, login: pending.login, name: pending.name, avatarUrl: pending.avatarUrl },
+      { githubId: pending.githubId, login: pending.login, name: pending.name },
       "full",
     );
   }

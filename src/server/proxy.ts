@@ -221,8 +221,6 @@ export function openTerminal(opts: {
     if (msg?.t === "resize") {
       size = { cols: clampDim(msg.cols, size.cols, 500), rows: clampDim(msg.rows, size.rows, 200) };
       stream?.setWindow(size.rows, size.cols, 0, 0);
-    } else if (msg?.t === "ping") {
-      send({ t: "pong", ts: msg.ts });
     }
   });
   ws.on("close", () => close("Browser disconnected"));

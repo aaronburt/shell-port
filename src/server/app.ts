@@ -77,7 +77,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self'",
-        "img-src 'self' data: https://avatars.githubusercontent.com",
+        "img-src 'self'",
         `connect-src 'self' ${wsOrigin}`,
         "frame-ancestors 'none'",
         "base-uri 'none'",
@@ -155,7 +155,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     }
     const stale = cookieValue(req.headers.cookie, SID);
     if (stale) sessions.destroy(stale);
-    const s = sessions.create({ githubId: user.id, login: user.login, name: user.name, avatarUrl: user.avatarUrl }, "totp");
+    const s = sessions.create({ githubId: user.id, login: user.login, name: user.name }, "totp");
     audit("login.github_ok", { ip: ipOf(req), user: user.login, githubId: user.id });
     res.setHeader("Set-Cookie", [clearState, serializeCookie(SID, s.id, cookieOpts(cfg.session.ttlHours * 3600))]);
     res.redirect("/");
@@ -164,7 +164,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   app.get("/auth/totp", (req, res) => {
     const s = anySession(req.headers.cookie);
     if (s?.stage !== "totp") return res.status(401).json({ error: "no_pending_login" });
-    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl });
+    res.json({ login: s.login, name: s.name });
   });
 
   app.post("/auth/totp", requireSameOrigin, express.json({ limit: "1kb" }), (req, res) => {
@@ -205,7 +205,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.get("/api/me", requireSession, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt });
+    res.json({ login: s.login, name: s.name, expiresAt: s.expiresAt });
   });
 
   app.get("/api/signins", requireSession, (req, res) => {

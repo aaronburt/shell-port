@@ -51,6 +51,13 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 
 This generates keys, starts two demo SSH servers (unencrypted and passphrase-protected), and pins their host keys in `config.json`.
 
+## Using the interface
+
+- **Sidebar:** search your hosts, click one to open a terminal, or use the **+** that appears on a host row (on hover or keyboard focus) to open another session of the same host. The toggle beside the search box collapses the sidebar to a narrow strip.
+- **Account menu:** the avatar at the bottom of the sidebar opens a menu with your login, the keyboard shortcuts and **Sign out**. Signing out asks for confirmation first, because it disconnects your open terminals.
+- **Session details:** the panel on the right of the tab bar shows the connection details and your recent sign-ins, and can sign out your other sessions.
+- **Status bar:** the connection state on the left, then the encoding, terminal type and size.
+
 ## Configuration
 
 Settings are defined in `config.json` (see [`config.example.json`](config.example.json)). Secrets can be literal strings, `{ "env": "VAR_NAME" }`, or `{ "file": "path/to/file" }`.
@@ -74,6 +81,7 @@ Settings are defined in `config.json` (see [`config.example.json`](config.exampl
 npm test               # Unit and end-to-end test suite
 npm run typecheck      # TypeScript type checking
 npm run smoke -- <url> # Black-box security and header checks against a running instance
+npm run smoke:full     # Isolated end-to-end run: real SSH containers and a headless browser (set SMOKE_SCREENSHOTS=<folder> to save screenshots)
 ```
 
 ## Security
