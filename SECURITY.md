@@ -21,6 +21,7 @@ What it defends against:
 - Anonymous access: GitHub OAuth plus a required, single-use TOTP code, with rate limits on sign-in and code entry.
 - Cross-site attacks: exact `Origin` check on the WebSocket, `SameSite` HttpOnly cookies, no CORS, a strict Content-Security-Policy with no inline or third-party scripts, and no framing.
 - Credential theft from the browser: SSH keys and passwords stay on the server and are never sent to the client. Key hosts ask the user for the key passphrase in the terminal tab, and it is never stored or logged.
+- Abuse of the file explorer: it uses the terminal's own SSH connection, so no second login or credential is involved. Each request needs the signed-in session that owns the terminal and an unguessable terminal id, and deletes also need the same `Origin`. Paths must be absolute with no `..` or control characters, previews and downloads are size limited, at most two downloads run per terminal, and every list, view, download and delete is written to the audit log with the user, host and path. A host can opt out with `files: false`.
 - Man-in-the-middle on the SSH hop: host keys must be pinned by fingerprint, and a mismatch is refused and logged.
 
 Design notes (choices that look odd but are deliberate):
@@ -35,7 +36,7 @@ Design notes (choices that look odd but are deliberate):
 What it does not defend against:
 
 - Anyone who can read the server's files or environment, since TOTP secrets and host credentials are stored there in plaintext.
-- A user who has passed both factors: there is no per-command control or session recording.
+- A user who has passed both factors: there is no per-command control or session recording. The file explorer can read and delete anything the configured SSH account can, exactly like the terminal can; Shellport adds no path jail beyond that account's permissions.
 - Running over plain HTTP on an untrusted network. Use HTTPS, and preferably put the service behind a VPN or an identity-aware proxy.
 - Multiple instances: sessions are in memory and per-IP rate limits are not shared.
 

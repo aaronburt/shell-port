@@ -7,6 +7,7 @@ import net from "node:net";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import WebSocket from "ws";
+import { Client as SshClient } from "ssh2";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { validateConfig } from "../../src/server/config.js";
 import { base32Encode, hotp } from "../../src/server/totp.js";
@@ -67,6 +68,8 @@ function buildConfig(port: number) {
         auth: { type: "key", privateKey: targets.plain.privateKey, passphrase: false }, hostKeyFingerprints: [targets.plain.fingerprint] },
       { id: "locked", name: "demo-locked", group: "Smoke", tag: "passphrase", host: "127.0.0.1", port: targets.locked.port, username: "demo",
         auth: { type: "key", privateKey: targets.locked.privateKey }, hostKeyFingerprints: [targets.locked.fingerprint] },
+      { id: "nofiles", name: "demo-nofiles", group: "Smoke", host: "127.0.0.1", port: targets.plain.port, username: "demo", files: false,
+        auth: { type: "key", privateKey: targets.plain.privateKey, passphrase: false }, hostKeyFingerprints: [targets.plain.fingerprint] },
       { id: "mismatch", name: "demo-mismatch", group: "Smoke", host: "127.0.0.1", port: targets.plain.port, username: "demo",
         auth: { type: "key", privateKey: targets.plain.privateKey, passphrase: false }, hostKeyFingerprints: [MISMATCH_FP] },
       { id: "restricted", name: "demo-restricted", group: "Private", host: "127.0.0.1", port: targets.plain.port, username: "demo",
@@ -279,7 +282,7 @@ test("the host list shows only permitted hosts and never a secret", async () => 
   const cookie = await signIn("smoke-user");
   const { status, body } = await getJson(cookie, "/api/hosts");
   assert.equal(status, 200);
-  assert.deepEqual(body.map((h: any) => h.id).sort(), ["locked", "mismatch", "plain"]);
+  assert.deepEqual(body.map((h: any) => h.id).sort(), ["locked", "mismatch", "nofiles", "plain"]);
   for (const h of body) assert.deepEqual(Object.keys(h).sort(), ["addr", "group", "id", "name", "tag"]);
   const text = JSON.stringify(body);
   assert.doesNotMatch(text, /SHA256:|PRIVATE KEY|OPENSSH|never-send|password|privateKey/i);
@@ -323,6 +326,89 @@ test("several terminals on one session are independent", async () => {
   await b.waitFor("b output", () => /only-in-b/.test(b.out));
   assert.ok(!/only-in-b/.test(a.out) && !/only-in-a/.test(b.out));
   await settle(a, b);
+});
+
+function remoteExec(cmd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const c = new SshClient();
+    let out = "";
+    c.on("ready", () => {
+      c.exec(cmd, (err, stream) => {
+        if (err) { c.end(); return reject(err); }
+        stream.on("data", (d: Buffer) => { out += d.toString(); });
+        stream.on("close", (code: number) => { c.end(); code === 0 ? resolve(out) : reject(new Error(`remote command failed (${code}): ${cmd}`)); });
+      });
+    });
+    c.on("error", reject);
+    c.connect({ host: "127.0.0.1", port: targets.plain.port, username: "demo", privateKey: targets.plain.privateKey, readyTimeout: 15_000 });
+  });
+}
+
+async function sftpFixture(tag: string) {
+  await remoteExec(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && yes aaaaaaaaa | head -c 300000 > ~/fx-${tag}/long.txt; printf 'a\\0b' > ~/fx-${tag}/blob.bin`);
+}
+
+test("files: a real OpenSSH host lists, views, downloads and deletes through SFTP, and refuses unsafe paths", async () => {
+  const cookie = await signIn("smoke-user");
+  const t = await connect(cookie, "plain");
+  const info = t.json.find((m) => m.state === "connected").info;
+  assert.equal(info.files, true);
+  await sftpFixture("api");
+  const call = (route: string, query: Record<string, string> = {}, init: RequestInit = {}, c = cookie) =>
+    fetch(`${base}/api/terminals/${info.id}/files${route}${Object.keys(query).length ? "?" + new URLSearchParams(query) : ""}`, { ...init, headers: { cookie: c, ...(init.headers as object) } });
+
+  const home = await (await call("")).json();
+  assert.equal(home.path, "/home/demo");
+  const names = home.entries.map((e: any) => e.name);
+  assert.ok(names.includes("fx-api"), `home lists the fixture folder: ${names}`);
+  assert.equal(home.entries.find((e: any) => e.name === "fx-api").kind, "dir");
+
+  const dir = "/home/demo/fx-api";
+  const inside = await (await call("", { path: dir })).json();
+  assert.deepEqual(inside.entries.map((e: any) => e.name).sort(), ["blob.bin", "gone.txt", "long.txt", "note.txt", "sub"]);
+
+  const view = await (await call("/view", { path: `${dir}/note.txt` })).json();
+  assert.equal(view.text, "hello-api\n");
+  const long = await (await call("/view", { path: `${dir}/long.txt` })).json();
+  assert.deepEqual([long.truncated, long.text.length, long.size], [true, 256 * 1024, 300000]);
+  assert.equal((await (await call("/view", { path: `${dir}/blob.bin` })).json()).binary, true);
+
+  const dl = await call("/download", { path: `${dir}/note.txt` });
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get("content-disposition")!, /^attachment; filename="note\.txt"/);
+  assert.equal(await dl.text(), "hello-api\n");
+
+  for (const p of ["relative", "/home/demo/../../etc/passwd", "/tmp/a\u0000b"]) assert.equal((await call("/view", { path: p })).status, 400, p);
+  assert.equal((await call("/view", { path: "/root/.profile" })).status, 403, "the SSH account's own permissions still apply");
+  assert.equal((await call("", { path: "/no/such/dir" })).status, 404);
+
+  const post = (p: string, headers: Record<string, string> = { origin: base }) =>
+    call("/delete", {}, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ path: p }) });
+  assert.equal((await post(`${dir}/gone.txt`, {})).status, 403);
+  assert.equal((await post(`${dir}/gone.txt`, { origin: "https://evil.example" })).status, 403);
+  assert.equal((await post(`${dir}/gone.txt`)).status, 200);
+  assert.equal((await call("/view", { path: `${dir}/gone.txt` })).status, 404);
+  assert.equal((await post(dir)).status, 409, "a folder with files in it is not deleted");
+  assert.equal((await post(`${dir}/sub`)).status, 200);
+
+  const other = await signIn("other-user");
+  assert.equal((await call("", {}, {}, other)).status, 404, "another user cannot reach this terminal's files");
+  assert.equal((await fetch(`${base}/api/terminals/${info.id}/files`)).status, 401);
+
+  await remoteExec("rm -rf ~/fx-api");
+  await settle(t);
+});
+
+test("files: a host with files turned off refuses SFTP even though the terminal works", async () => {
+  const cookie = await signIn("smoke-user");
+  const t = await connect(cookie, "nofiles");
+  const info = t.json.find((m) => m.state === "connected").info;
+  assert.equal(info.files, false);
+  const r = await fetch(`${base}/api/terminals/${info.id}/files`, { headers: { cookie } });
+  assert.equal(r.status, 403);
+  t.type("echo still-works\n");
+  await t.waitFor("terminal output", () => /still-works/.test(t.out));
+  await settle(t);
 });
 
 test("the per-user terminal cap refuses the fourth terminal", async () => {
@@ -586,7 +672,7 @@ test("UI: the sidebar footer is pinned to the bottom and shows only the avatar a
 
 test("UI: the host list shows permitted hosts and no secret anywhere on the page", async () => {
   const names = await ui.locator("#hosts .host .name").allInnerTexts();
-  assert.deepEqual(names.sort(), ["demo-locked", "demo-mismatch", "demo-plain"]);
+  assert.deepEqual(names.sort(), ["demo-locked", "demo-mismatch", "demo-nofiles", "demo-plain"]);
   const html = await ui.content();
   assert.doesNotMatch(html, /SHA256:|PRIVATE KEY|never-send|demo-restricted/);
 });
@@ -597,6 +683,82 @@ test("UI: opening a host runs a command and shows its output", async () => {
   await typeLine(ui, "echo ui-$((6*7)); whoami");
   await waitTerm(ui, /ui-42/);
   await waitTerm(ui, /\ndemo\s*\n/);
+});
+
+test("UI: the folder icon on an SSH tab switches that tab between the terminal and its files", async () => {
+  await ui.locator('button.host[data-host="plain"]').click();
+  await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
+  await remoteExec("mkdir -p ~/fx-ui/sub && echo hello-ui > ~/fx-ui/note.txt && echo bye > ~/fx-ui/gone.txt");
+
+  const icon = ui.locator(".tab.active .tab-files");
+  assert.equal(await icon.getAttribute("aria-pressed"), "false");
+  await icon.click();
+  const files = ui.locator("#terms .files:not([hidden])");
+  await files.locator(".files-row").first().waitFor();
+  assert.equal(await ui.locator(".pane:not([hidden])").count(), 0, "the terminal is hidden while files are showing");
+  assert.equal(await icon.getAttribute("aria-pressed"), "true");
+  assert.match(await files.locator(".crumbs").innerText(), /home\s*demo/);
+  assert.match(await files.locator(".files-foot").innerText(), /SFTP · demo@/);
+  const bar = await files.locator(".files-bar").innerText();
+  assert.doesNotMatch(bar, /Upload/);
+  for (const label of ["Up", "Refresh", "View", "Download", "Delete"]) assert.match(bar, new RegExp(label));
+  assert.equal(await files.locator('[data-view]').isDisabled(), true, "nothing is selected yet");
+
+  await files.locator('.files-row[data-name="fx-ui"]').click();
+  assert.equal(await files.locator('.files-row[data-name="fx-ui"]').getAttribute("class").then((c) => /sel/.test(c ?? "")), true, "one click selects");
+  assert.equal(await files.locator('[data-view]').isDisabled(), true, "a folder cannot be viewed");
+  await files.locator('.files-row[data-name="fx-ui"]').dblclick();
+  await files.locator('.files-row[data-name="note.txt"]').waitFor();
+  assert.match(await files.locator(".crumbs").innerText(), /fx-ui/);
+
+  await files.locator('.files-row[data-name="note.txt"]').dblclick();
+  await files.locator(".files-view").waitFor();
+  assert.match(await files.locator(".files-view").innerText(), /hello-ui/);
+  assert.match(await files.locator(".files-foot").innerText(), /read only/);
+  await files.locator("[data-back]").click();
+  await files.locator('.files-row[data-name="note.txt"]').waitFor();
+
+  await files.locator('.files-row[data-name="note.txt"]').click({ button: "right" });
+  const menu = ui.locator(".ctxmenu:not([hidden])");
+  assert.deepEqual((await menu.locator("button").allInnerTexts()).map((x) => x.trim()), ["View", "Download", "Delete"]);
+  const [download] = await Promise.all([ui.waitForEvent("download"), menu.locator("[data-download]").click()]);
+  assert.equal(download.suggestedFilename(), "note.txt");
+  const path = await download.path();
+  assert.equal(fs.readFileSync(path!, "utf8"), "hello-ui\n");
+
+  await files.locator('.files-row[data-name="sub"]').click({ button: "right" });
+  assert.deepEqual((await ui.locator(".ctxmenu:not([hidden]) button").allInnerTexts()).map((x) => x.trim()), ["Open", "Download", "Delete"]);
+  await ui.keyboard.press("Escape");
+  assert.equal(await ui.locator(".ctxmenu:not([hidden])").count(), 0);
+
+  await files.locator('.files-row[data-name="gone.txt"]').click({ button: "right" });
+  await ui.locator(".ctxmenu:not([hidden]) [data-delete]").click();
+  const dialog = ui.getByRole("alertdialog");
+  assert.match(await dialog.innerText(), /Delete gone\.txt\?/);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await files.locator('.files-row[data-name="gone.txt"]').count(), 1, "cancelling keeps the file");
+  await files.locator('.files-row[data-name="gone.txt"]').click();
+  await files.locator("[data-delete]").click();
+  await ui.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await until("file removed", async () => (await files.locator('.files-row[data-name="gone.txt"]').count()) === 0);
+  assert.equal(await files.locator('.files-row[data-name="note.txt"]').count(), 1);
+
+  await files.locator("[data-up]").click();
+  await files.locator('.files-row[data-name="fx-ui"]').waitFor();
+  await files.locator("[data-refresh]").click();
+  await files.locator('.files-row[data-name="fx-ui"]').waitFor();
+
+  await icon.click();
+  await ui.locator(".pane:not([hidden])").waitFor();
+  assert.equal(await ui.locator("#terms .files:not([hidden])").count(), 0);
+  await remoteExec("test ! -e ~/fx-ui/gone.txt && test -e ~/fx-ui/note.txt && rm -rf ~/fx-ui");
+});
+
+test("UI: the folder icon is hidden for hosts with files turned off", async () => {
+  await ui.locator('button.host[data-host="nofiles"]').click();
+  await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
+  assert.equal(await ui.locator(".tab.active .tab-files").count(), 0);
+  await ui.locator("#close-session").click();
 });
 
 test("UI: there is no status bar, and the terminal reaches the bottom of the window", async () => {
@@ -616,10 +778,14 @@ test("UI: the session panel has a Close session action and no shortcuts", async 
   const close = ui.locator("#drawer #close-session");
   assert.equal(await close.isVisible(), true);
   assert.equal(await close.innerText(), "Close session");
-  const head = await ui.locator("#drawer .drawer-head").first().boundingBox();
   const btn = await close.boundingBox();
-  const details = await ui.locator("#kv").boundingBox();
-  assert.ok(head && btn && details && btn.y >= head.y - 1 && btn.y + btn.height <= details.y, "the action sits at the top of the panel, above the details");
+  const body = await ui.locator("#drawer .drawer-body").boundingBox();
+  const signins = await ui.locator("#signins").boundingBox();
+  assert.ok(btn && body && signins, "the panel is laid out");
+  assert.ok(btn.y >= signins.y + signins.height - 1, "Close session sits below the sign-ins list");
+  assert.ok(Math.abs(btn.y + btn.height + 14 - (body.y + body.height)) < 3, `Close session sits at the bottom of the panel (button ends at ${btn.y + btn.height}, panel at ${body.y + body.height})`);
+  assert.ok(btn.width > 230, `Close session is a full-width button (${btn.width}px)`);
+  assert.equal(await ui.locator("#drawer .drawer-head .tool").count(), 0, "no small text actions are left in the panel headings");
 });
 
 test("UI: the session panel slides without scrollbars or sideways scrolling, and the sidebar toggle is coloured while it is open", async () => {

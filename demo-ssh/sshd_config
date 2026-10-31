@@ -9,3 +9,4 @@ AuthorizedKeysFile .ssh/authorized_keys
 AllowTcpForwarding no
 X11Forwarding no
 PermitUserEnvironment no
+Subsystem sftp internal-sftp

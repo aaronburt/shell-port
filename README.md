@@ -12,6 +12,7 @@ The screenshots show a local instance with demo hosts and a demo account. No rea
 - **Preconfigured hosts only.** Administrators define hosts, credentials and pinned host keys on the server. Users pick a host from the list. They can't add connections or see private keys.
 - **Passphrases typed in the browser.** If a key is passphrase-protected, the terminal asks for the passphrase when you connect. It is never stored or logged.
 - **Tabs and sessions.** Open several sessions to the same host, drag tabs to reorder them, and check your recent sign-ins in the session panel.
+- **File explorer per tab.** The folder icon on an SSH tab switches that tab between the terminal and its files, over SFTP on the same connection. Browse, view small text files, download, and delete. It acts as the host's SSH user, so the host's own permissions apply. Upload is not supported yet.
 - **Works on a phone.** The host list and session panel open over the terminal on small screens.
 
 ## Screens
@@ -135,8 +136,8 @@ Shellport reads `config.json`. Start from [`config.example.json`](config.example
 | `server` | Port, listen address, `publicUrl` (the origin used for OAuth redirects and WebSocket checks) and `trustProxy`. |
 | `github` | OAuth app `clientId` and `clientSecret`. |
 | `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. |
-| `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints` and optional `allowedUsers`. |
-| `limits` | Terminals per user, idle timeout and sign-in attempts per 15 minutes. |
+| `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints`, optional `allowedUsers`, and `files` (set it to `false` to turn off the file explorer for that host; it is on by default). |
+| `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, and `maxDownloadMB` (largest file the explorer will download, default 256). |
 | `session` | How long a sign-in lasts (`ttlHours`). |
 | `security` | Security options. Leave `allowUnpinnedHostKeys` at `false`. |
 
@@ -153,7 +154,8 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 
 - **Tab bar.** The sidebar toggle and the host search box sit at the left. Each session is a tab. Drag tabs to reorder them.
 - **Host list.** Click a host to open a terminal. Hover over a host, or focus it with the keyboard, and click **+** to open another session to the same host.
-- **Session panel.** The panel on the right of the tab bar shows the connection details and your recent sign-ins. **Close session** closes the active tab. **Sign out others** ends your other sessions. Use the toggle in the tab bar to hide the panel.
+- **Session panel.** The panel on the right of the tab bar shows the connection details and your recent sign-ins. **Sign out others** and **Close session** are buttons at the bottom: the first ends your other sessions, the second closes the active tab. Use the toggle in the tab bar to hide the panel.
+- **Files.** Click the folder icon on a tab to see the host's files, and click it again to go back to the terminal. Click a file or folder to select it, double-click to open a folder or view a file, and right-click for **View** or **Open**, **Download** and **Delete**. The path bar has **Up** and **Refresh**. Delete asks first, removes one file or one empty folder, and can't be undone. The viewer is read only and shows the first 256 KB of a text file.
 - **Account.** Click your avatar for the account dialog. It shows your login, a **Hide host addresses** switch (stored in this browser only), the keyboard shortcuts, and **Sign out**. Signing out asks first, because it disconnects your open terminals.
 
 | Shortcut | Action |

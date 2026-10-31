@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
-import { Client, type ConnectConfig, type ClientChannel } from "ssh2";
+import { Client, type ConnectConfig, type ClientChannel, type SFTPWrapper } from "ssh2";
 import type { Socket } from "node:net";
 import type { WebSocket, RawData } from "ws";
 import { resolveSecret, hostNeedsPassphrase, type HostConfig, type LoadedConfig } from "./config.js";
 import type { RateLimiter, UserSession } from "./sessions.js";
 import { audit } from "./log.js";
 import type { ActivityLog } from "./activity.js";
+import { FileError } from "./sftp.js";
 
 const HIGH_WATER = 1 << 20;
 const PASSPHRASE_TRIES = 3;
@@ -19,8 +20,12 @@ export interface TerminalTiming {
 }
 
 export interface TerminalInfo {
+  id: string;
   user: string;
   hostId: string;
+  files: boolean;
+  sftp(): Promise<SFTPWrapper>;
+  touch(): void;
   close(reason: string): void;
 }
 
@@ -81,6 +86,28 @@ export function openTerminal(opts: {
   const phases: Record<string, number> = {};
   const mark = (name: string) => { phases[name] = Date.now() - connectStart; };
 
+  const id = crypto.randomBytes(16).toString("base64url");
+  let ready = false;
+  let sftpPromise: Promise<SFTPWrapper> | undefined;
+  const files = host.files !== false;
+  const sftp = (): Promise<SFTPWrapper> => {
+    if (!files) return Promise.reject(new FileError(403, "files_disabled"));
+    if (!ready || closed) return Promise.reject(new FileError(409, "not_connected"));
+    sftpPromise ??= new Promise<SFTPWrapper>((resolve, reject) => {
+      ssh.sftp((err, s) => {
+        if (err) {
+          sftpPromise = undefined;
+          return reject(new FileError(502, "sftp_unavailable"));
+        }
+        s.on("close", () => { sftpPromise = undefined; });
+        resolve(s);
+      });
+    });
+    return sftpPromise;
+  };
+  const touch = () => { lastActivity = Date.now(); };
+  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, files, sftp, touch, close: (reason) => close(reason) };
+
   const ssh = new Client();
   const auditBase = { user: session.login, host: host.id, ip };
 
@@ -137,7 +164,7 @@ export function openTerminal(opts: {
     audit("terminal.error", { ...auditBase, error: (e as Error).message });
     send({ t: "error", message: "This host's credentials are misconfigured on the server." });
     queueMicrotask(() => close("Configuration error"));
-    return { user: session.login, hostId: host.id, close };
+    return handle;
   }
 
   let cipher = "";
@@ -147,6 +174,7 @@ export function openTerminal(opts: {
   });
 
   ssh.on("ready", () => {
+    ready = true;
     mark("authMs");
     ssh.shell({ term: "xterm-256color", ...size }, (err, s) => {
       if (err) {
@@ -160,6 +188,8 @@ export function openTerminal(opts: {
         t: "status",
         state: "connected",
         info: {
+          id,
+          files,
           host: `${host.host}:${host.port}`,
           user: host.username,
           auth: host.auth.type === "key"
@@ -290,5 +320,5 @@ export function openTerminal(opts: {
     mark("connectCallMs");
   }
 
-  return { user: session.login, hostId: host.id, close };
+  return handle;
 }
