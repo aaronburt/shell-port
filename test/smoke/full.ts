@@ -1,6 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
@@ -101,7 +102,7 @@ before(async () => {
       exchange: async (c) => {
         const id = USERS[c];
         if (!id) throw new Error("unknown smoke user");
-        return { id, login: c, name: c, avatarUrl: "https://avatars.githubusercontent.com/u/1" };
+        return { id, login: c, name: c };
       },
     });
     try {
@@ -468,11 +469,7 @@ test("signing out closes the session's terminals and kills the session", async (
 async function newContext(login: string): Promise<BrowserContext> {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 720 } });
   contexts.push(ctx);
-  await ctx.route((url) => url.origin !== base, (route) => {
-    if (route.request().url().startsWith("https://avatars.githubusercontent.com/"))
-      return route.fulfill({ status: 200, contentType: "image/gif", body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64") });
-    return route.abort();
-  });
+  await ctx.route((url) => url.origin !== base, (route) => route.abort());
   await ctx.route(`${base}/auth/github`, async (route) => {
     const upstream = await route.fetch({ maxRedirects: 0 });
     const state = new URL(upstream.headers().location).searchParams.get("state");
@@ -544,7 +541,33 @@ let ui: Page;
 test("UI: GitHub sign-in, TOTP page, wrong then right code, session rotation", async () => {
   uiCtx = await newContext("ui-user");
   ui = await uiSignIn(uiCtx);
-  assert.match(await ui.locator("#me-sub").innerText(), /ui-user/);
+  assert.equal(await ui.locator("#me-login").innerText(), "ui-user");
+  assert.equal(await ui.locator("#me-initials").innerText(), "UI");
+});
+
+test("UI: the sidebar top row is the toggle and search only, and the tab bar has no plus button", async () => {
+  assert.equal(await ui.locator(".rail .logo, .rail .brand, #search-kbd, .rail kbd").count(), 0);
+  const top = ui.locator(".rail-top");
+  assert.equal(await top.locator("#rail-toggle").count(), 1);
+  assert.equal(await top.locator("#host-search").count(), 1);
+  const toggle = await ui.locator("#rail-toggle").boundingBox();
+  const search = await ui.locator(".rail-top .search").boundingBox();
+  assert.ok(toggle && search && toggle.x + toggle.width <= search.x + 1, "the toggle sits left of the search box");
+  assert.ok(Math.abs(toggle.y + toggle.height / 2 - (search.y + search.height / 2)) < 6, "the toggle and search share a row");
+  assert.equal(await ui.locator("#add-tab, #tabs .add").count(), 0);
+  assert.deepEqual(await ui.locator(".tab-tools button").evaluateAll((els) => els.map((e) => e.id)), ["drawer-toggle"]);
+});
+
+test("UI: the sidebar footer is pinned to the bottom and shows only the avatar and login", async () => {
+  const foot = ui.locator(".rail-foot");
+  const rail = await ui.locator(".rail").boundingBox();
+  const box = await foot.boundingBox();
+  assert.ok(rail && box && Math.abs(rail.y + rail.height - (box.y + box.height)) < 2, "the footer touches the bottom of the sidebar");
+  assert.equal(flatten(await foot.innerText()), "UI ui-user");
+  assert.equal(await foot.locator("img, svg, button:not(#account-btn)").count(), 0);
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "menu");
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-label"), "Account menu");
+  assert.equal(await ui.locator("#signout").count(), 0);
 });
 
 test("UI: the host list shows permitted hosts and no secret anywhere on the page", async () => {
@@ -560,6 +583,30 @@ test("UI: opening a host runs a command and shows its output", async () => {
   await typeLine(ui, "echo ui-$((6*7)); whoami");
   await waitTerm(ui, /ui-42/);
   await waitTerm(ui, /\ndemo\s*\n/);
+});
+
+test("UI: the status bar shows only the connection state, then the encoding, terminal type and size", async () => {
+  const items = await ui.locator("#status > span:not(.sep)").allInnerTexts();
+  assert.equal(items.length, 4, `status items: ${JSON.stringify(items)}`);
+  assert.match(items[0], /^● connected$/);
+  assert.deepEqual(items.slice(1, 3), ["UTF-8", "xterm-256color"]);
+  assert.match(items[3], /^[0-9]+×[0-9]+$/);
+  const text = await ui.locator("#status").innerText();
+  assert.doesNotMatch(text, /127\.0\.0\.1|demo@|aes|chacha| ms/);
+  const [first, spacer, last] = await Promise.all([
+    ui.locator("#status > span").first().boundingBox(),
+    ui.locator("#status .sep").boundingBox(),
+    ui.locator("#status > span").last().boundingBox(),
+  ]);
+  assert.ok(first && spacer && last && spacer.width > 100 && last.x > first.x + 200, "the size sits at the right end of the bar");
+});
+
+test("UI: the session drawer keeps details and sign-ins but no shortcuts", async () => {
+  const drawer = await ui.locator("#drawer").innerText();
+  assert.match(drawer, /session/i);
+  assert.match(drawer, /sign-ins/i);
+  assert.doesNotMatch(drawer, /shortcuts|toggle sidebar|search hosts/i);
+  assert.equal(await ui.locator("#drawer #keys").count(), 0);
 });
 
 test("UI: resizing the browser resizes the remote terminal", async () => {
@@ -579,8 +626,22 @@ test("UI: resizing the browser resizes the remote terminal", async () => {
   await ui.setViewportSize({ width: 1100, height: 720 });
 });
 
-test("UI: a second tab to the same host is independent, and tabs close", async () => {
-  await ui.locator('button.host-new[data-new="plain"]').click({ force: true });
+test("UI: the hover plus on a host row opens a second session, and it is reachable from the keyboard", async () => {
+  const plus = ui.locator('button.host-new[data-new="plain"]');
+  const row = ui.locator(".host-row", { has: plus });
+  await ui.mouse.move(700, 400);
+  await ui.locator("#hosts").evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  assert.equal(await plus.evaluate((el) => getComputedStyle(el).opacity), "0", "hidden until hover or focus");
+  await row.hover();
+  assert.equal(await plus.evaluate((el) => getComputedStyle(el).opacity), "1", "visible on hover");
+  await ui.mouse.move(700, 400);
+  await ui.locator('button.host[data-host="plain"]').focus();
+  await ui.keyboard.press("Tab");
+  assert.equal(await plus.evaluate((el) => document.activeElement === el), true, "Tab from the host reaches the plus");
+  assert.equal(await plus.evaluate((el) => getComputedStyle(el).opacity), "1", "visible on keyboard focus");
+  await ui.locator('button.host[data-host="plain"]').focus();
+  await row.hover();
+  await plus.click();
   await until("two tabs", async () => (await ui.locator("#tab-scroll .tab").count()) === 2);
   await until("second connected", async () => /connected/.test(await statusText(ui)), 20_000);
   await typeLine(ui, "echo second-tab-only");
@@ -666,13 +727,184 @@ test("UI: the Sign-ins panel shows the other session and signs it out, closing i
   await peerCtx.close();
 });
 
+const openAccountMenu = async (page: Page) => {
+  await page.locator("#account-btn").click();
+  await page.locator("#umenu").waitFor({ state: "visible" });
+};
+
+const chooseSignOut = async (page: Page) => {
+  await openAccountMenu(page);
+  await page.locator("#umenu-signout").click();
+  await page.locator("#signout-dialog").waitFor({ state: "visible" });
+};
+
+const isFocused = (page: Page, selector: string) => page.locator(selector).evaluate((el) => document.activeElement === el);
+
+test("UI: the avatar opens an account menu with the login, the shortcuts and Sign out", async () => {
+  assert.equal(await ui.locator("#umenu").isVisible(), false);
+  await openAccountMenu(ui);
+  const menu = ui.locator("#umenu");
+  assert.equal(await menu.getAttribute("role"), "menu");
+  assert.equal(await menu.getAttribute("aria-label"), "Account menu");
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-expanded"), "true");
+  assert.equal(await ui.locator("#umenu-login").innerText(), "ui-user");
+  const text = flatten(await menu.innerText());
+  assert.match(text, /shortcuts/i);
+  assert.match(text, /Toggle sidebar/);
+  assert.match(text, /Search hosts/);
+  assert.match(text, /Copy \/ paste/);
+  assert.match(text, /Previous \/ next tab/);
+  assert.match(text, /Ctrl Shift B|⌘ B/);
+  assert.equal(await menu.locator('[role="menuitem"]').allInnerTexts().then((t) => t.join("|")), "Sign out");
+  assert.ok(await isFocused(ui, "#umenu-signout"), "focus moves into the menu");
+  const avatar = await ui.locator("#account-btn").boundingBox();
+  const box = await menu.boundingBox();
+  assert.ok(avatar && box && box.y + box.height <= avatar.y, "the menu opens above the avatar");
+  assert.ok(box!.width <= 264.5);
+  assert.equal(await menu.evaluate((el) => getComputedStyle(el).position), "fixed");
+});
+
+test("UI: Escape closes the account menu and returns focus to the avatar", async () => {
+  assert.equal(await ui.locator("#umenu").isVisible(), true);
+  await ui.keyboard.press("Escape");
+  assert.equal(await ui.locator("#umenu").isVisible(), false);
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-expanded"), "false");
+  assert.ok(await isFocused(ui, "#account-btn"), "focus returns to the avatar");
+});
+
+test("UI: clicking outside closes the account menu, and the avatar toggles it", async () => {
+  await openAccountMenu(ui);
+  await ui.mouse.click(600, 300);
+  assert.equal(await ui.locator("#umenu").isVisible(), false);
+  await openAccountMenu(ui);
+  await ui.locator("#account-btn").click();
+  assert.equal(await ui.locator("#umenu").isVisible(), false);
+});
+
+test("UI: Sign out asks first, and Cancel, Escape and the backdrop all keep the session", async () => {
+  const sid = (await sidOf(uiCtx))!;
+  const dialog = ui.locator("#signout-dialog");
+  await chooseSignOut(ui);
+  assert.equal(await dialog.getAttribute("role"), "alertdialog");
+  assert.equal(await dialog.getAttribute("aria-labelledby"), "signout-title");
+  assert.equal(await ui.locator("#signout-title").innerText(), "Sign out of Shellport?");
+  assert.equal(await ui.locator("#signout-text").innerText(), "Your open terminals will disconnect.");
+  assert.deepEqual(await dialog.locator("button").allInnerTexts(), ["Cancel", "Sign out"]);
+  assert.ok((await dialog.boundingBox())!.width <= 360.5);
+  assert.equal(await ui.locator("#umenu").isVisible(), false, "the menu closes when the dialog opens");
+
+  await ui.locator("#signout-cancel").click();
+  assert.equal(await dialog.isVisible(), false);
+  assert.ok(await isFocused(ui, "#account-btn"));
+
+  await chooseSignOut(ui);
+  await ui.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), false);
+
+  await chooseSignOut(ui);
+  await ui.mouse.click(10, 10);
+  assert.equal(await dialog.isVisible(), false);
+
+  await chooseSignOut(ui);
+  await dialog.click();
+  assert.equal(await dialog.isVisible(), true, "clicking inside the dialog does not close it");
+  await ui.locator("#signout-cancel").focus();
+  await ui.keyboard.press("Tab");
+  assert.ok(await isFocused(ui, "#signout-confirm"));
+  await ui.keyboard.press("Tab");
+  assert.ok(await isFocused(ui, "#signout-cancel"), "focus stays inside the dialog");
+  await ui.keyboard.press("Escape");
+
+  assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200, "the session is untouched");
+  assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0);
+});
+
+test("UI: a collapsed sidebar shows only the toggle and the avatar, and expands again", async () => {
+  await ui.locator("#rail-toggle").click();
+  await until("collapsed", async () => (await ui.locator("#ws").getAttribute("class"))?.includes("collapsed"));
+  await sleep(300);
+  assert.equal(await ui.locator("#rail-toggle").isVisible(), true);
+  assert.equal(await ui.locator(".rail-top .search").isVisible(), false);
+  assert.equal(await ui.locator("#hosts").isVisible(), false);
+  assert.equal(await ui.locator("#me-login").isVisible(), false);
+  assert.equal(await ui.locator("#account-btn").isVisible(), true);
+  const rail = await ui.locator(".rail").boundingBox();
+  const toggle = await ui.locator("#rail-toggle").boundingBox();
+  assert.ok(rail && toggle && Math.abs(rail.width - 48) < 2, `strip width ${rail?.width}`);
+  assert.ok(Math.abs(toggle.x + toggle.width / 2 - (rail.x + rail.width / 2)) < 2, "the toggle is centred in the strip");
+  assert.equal(await ui.locator("#rail-toggle").getAttribute("aria-expanded"), "false");
+  await ui.locator("#rail-toggle").click();
+  await until("expanded", async () => !(await ui.locator("#ws").getAttribute("class"))?.includes("collapsed"));
+  assert.equal(await ui.locator(".rail-top .search").isVisible(), true);
+  await sleep(300);
+});
+
+test("UI: screenshots (only when SMOKE_SCREENSHOTS names a folder)", { skip: !process.env.SMOKE_SCREENSHOTS }, async () => {
+  const dir = path.resolve(process.env.SMOKE_SCREENSHOTS!);
+  fs.mkdirSync(dir, { recursive: true });
+  const shot = (page: Page, name: string) => page.screenshot({ path: path.join(dir, name) });
+  await ui.locator("#notice").evaluate((el) => { (el as HTMLElement).hidden = true; });
+  await ui.locator('button.host[data-host="plain"]').click();
+  await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
+  await typeLine(ui, "echo welcome to $(hostname); uname -sr; ls -la /etc | head -14");
+  await waitTerm(ui, /Linux/);
+  await ui.locator("#hosts .host").first().hover();
+  await sleep(300);
+  await shot(ui, "1-sidebar-open.png");
+  await ui.locator("#rail-toggle").click();
+  await sleep(500);
+  await shot(ui, "2-sidebar-collapsed.png");
+  await ui.locator("#rail-toggle").click();
+  await sleep(500);
+  await openAccountMenu(ui);
+  await shot(ui, "3-account-menu.png");
+  await ui.locator("#umenu-signout").click();
+  await ui.locator("#signout-dialog").waitFor({ state: "visible" });
+  await shot(ui, "4-sign-out-dialog.png");
+  await ui.keyboard.press("Escape");
+  await closeAllTabs(ui);
+
+  const mobileCtx = await browser.newContext({ viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
+  contexts.push(mobileCtx);
+  await mobileCtx.route((url) => url.origin !== base, (route) => route.abort());
+  await mobileCtx.route(`${base}/auth/github`, async (route) => {
+    const upstream = await route.fetch({ maxRedirects: 0 });
+    const state = new URL(upstream.headers().location).searchParams.get("state");
+    await route.fulfill({ status: 302, headers: { ...upstream.headers(), location: `${base}/auth/github/callback?code=ui-peer&state=${state}` } });
+  });
+  const mobile = await mobileCtx.newPage();
+  await mobile.goto(base + "/");
+  await mobile.getByRole("link", { name: /Continue with GitHub/ }).click();
+  await mobile.waitForSelector("#code");
+  clock += 30_000;
+  await mobile.fill("#code", code());
+  await mobile.click("#go");
+  await mobile.waitForSelector("#menu-btn");
+  await mobile.locator("#menu-btn").click();
+  await sleep(500);
+  await shot(mobile, "5-mobile-sidebar.png");
+  await mobile.locator('button.host[data-host="plain"]').click();
+  await until("mobile connected", async () => /connected/.test(await statusText(mobile)), 20_000);
+  await typeLine(mobile, "echo mobile $(hostname)");
+  await waitTerm(mobile, /mobile/);
+  await sleep(300);
+  await shot(mobile, "6-mobile-terminal.png");
+  await mobile.locator("#menu-btn").click();
+  await sleep(400);
+  await openAccountMenu(mobile);
+  await shot(mobile, "7-mobile-account-menu.png");
+  await mobile.keyboard.press("Escape");
+  await mobileCtx.close();
+});
+
 test("UI: a failed sign out says so and keeps the page and session", async () => {
   const sid = (await sidOf(uiCtx))!;
   await ui.locator('button.host[data-host="plain"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
   await ui.route("**/auth/logout", (route) => route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"bad_origin"}' }));
   try {
-    await ui.locator("#signout").click();
+    await chooseSignOut(ui);
+    await ui.locator("#signout-confirm").click();
     await until("failed signout notice", async () => /Sign out failed \(status 403\)\. You are still signed in/.test(await ui.locator("#notice").innerText()));
     assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0, "the page must not reload to the sign-in page");
     assert.match(await statusText(ui), /connected/, "the terminal must stay open");
@@ -684,7 +916,8 @@ test("UI: a failed sign out says so and keeps the page and session", async () =>
 
 test("UI: signing out lands on the sign-in page and the session is dead", async () => {
   const sid = (await sidOf(uiCtx))!;
-  await ui.locator("#signout").click();
+  await chooseSignOut(ui);
+  await ui.locator("#signout-confirm").click();
   await ui.getByRole("heading", { name: /Sign in to Shellport/ }).waitFor();
   assert.equal((await fetch(base + "/api/me", { headers: { cookie: `sp_sid=${sid}` } })).status, 401);
   assert.equal(await wsStatus(`sp_sid=${sid}`, "plain", base), 401);

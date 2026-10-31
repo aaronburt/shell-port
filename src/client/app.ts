@@ -5,7 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { feedPassphrase } from "./passphrase.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { login: string; name: string; avatarUrl: string; expiresAt: number }
+interface Me { login: string; name: string; expiresAt: number }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -23,13 +23,11 @@ interface Tab {
   ws?: WebSocket;
   state: State;
   info?: Info;
-  rtt?: number;
   reason?: string;
   passphrase?: string;
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-const MOD = isMac ? "⌘" : "Ctrl";
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -116,10 +114,6 @@ function showRail() {
   if (matchMedia("(max-width: 760px)").matches) ws.classList.add("rail-open");
   else if (ws.classList.contains("collapsed")) toggleRail();
 }
-$("add-tab").onclick = () => {
-  showRail();
-  $("host-search").focus();
-};
 
 function toggleDrawer() {
   const d = $("drawer");
@@ -235,18 +229,13 @@ function connect(tab: Tab) {
   const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
   ws.binaryType = "arraybuffer";
   tab.ws = ws;
-  let pinger: number | undefined;
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ t: "resize", cols: tab.term.cols, rows: tab.term.rows }));
-    const ping = () => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: "ping", ts: performance.now() }));
-    ping();
-    pinger = window.setInterval(ping, 5000);
   };
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) { tab.term.write(new Uint8Array(ev.data)); return; }
     const msg = JSON.parse(ev.data);
-    if (msg.t === "pong") { tab.rtt = Math.round(performance.now() - msg.ts); if (tab === active) renderStatus(); return; }
     if (msg.t === "passphrase") {
       promptPassphrase(tab, !!msg.retry, Number(msg.remaining) || 0);
       if (msg.retry && tab === active) loadSignins(tab.host.id);
@@ -262,7 +251,6 @@ function connect(tab: Tab) {
     }
   };
   ws.onclose = (ev) => {
-    clearInterval(pinger);
     if (tab.ws !== ws) return;
     tab.passphrase = undefined;
     if (tab.state !== "closed") {
@@ -324,8 +312,7 @@ function renderStatus() {
   const t = active;
   if (!t) { $("status").innerHTML = `<span>No session</span>`; return; }
   const st = t.state === "connected" ? `<span class="ok">● connected</span>` : t.state === "connecting" ? `<span class="warn">● connecting</span>` : `<span class="bad">● closed</span>`;
-  $("status").innerHTML = `${st}<span>${esc(t.host.addr)}</span>${t.info?.cipher ? `<span>${esc(t.info.cipher)}</span>` : ""}${t.rtt !== undefined && t.state === "connected" ? `<span title="Round trip to the Shellport server">${t.rtt} ms</span>` : ""}
-    <span class="sep"></span><span>UTF-8</span><span>xterm-256color</span><span>${t.term.cols}×${t.term.rows}</span>`;
+  $("status").innerHTML = `${st}<span class="sep"></span><span>UTF-8</span><span>xterm-256color</span><span>${t.term.cols}×${t.term.rows}</span>`;
 }
 
 const fmtTime = (ms: number) =>
@@ -404,7 +391,6 @@ $("keys").innerHTML = [
   [isMac ? "⌘ C / ⌘ V" : "Ctrl Shift C / V", "Copy / paste"],
   ["Alt ← / →", "Previous / next tab"],
 ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
-$("search-kbd").textContent = `${MOD}K`;
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
 function handleTermKey(e: KeyboardEvent, tab: Tab): boolean {
@@ -451,9 +437,78 @@ window.addEventListener("beforeunload", (e) => {
   if (tabs.some((t) => t.state === "connected")) e.preventDefault();
 });
 
-$("signout").onclick = async () => {
+const accountBtn = $("account-btn");
+const umenu = $("umenu");
+const scrim = $("signout-scrim");
+
+function openMenu() {
+  const r = accountBtn.getBoundingClientRect();
+  umenu.hidden = false;
+  umenu.style.left = `${Math.min(Math.max(8, r.left), Math.max(8, innerWidth - umenu.offsetWidth - 8))}px`;
+  umenu.style.bottom = `${innerHeight - r.top + 8}px`;
+  accountBtn.setAttribute("aria-expanded", "true");
+  $("umenu-signout").focus();
+}
+
+function closeMenu(returnFocus = false) {
+  if (umenu.hidden) return;
+  umenu.hidden = true;
+  accountBtn.setAttribute("aria-expanded", "false");
+  if (returnFocus) accountBtn.focus();
+}
+
+accountBtn.onclick = () => (umenu.hidden ? openMenu() : closeMenu(true));
+
+document.addEventListener("pointerdown", (e) => {
+  const target = e.target as Node;
+  if (!umenu.hidden && !umenu.contains(target) && !accountBtn.contains(target)) closeMenu();
+});
+
+umenu.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeMenu(true);
+  } else if (e.key === "Tab") {
+    closeMenu();
+  }
+});
+
+function openSignOutDialog() {
+  closeMenu();
+  scrim.hidden = false;
+  $("signout-cancel").focus();
+}
+
+function closeSignOutDialog() {
+  if (scrim.hidden) return;
+  scrim.hidden = true;
+  accountBtn.focus();
+}
+
+$("umenu-signout").onclick = openSignOutDialog;
+$("signout-cancel").onclick = closeSignOutDialog;
+scrim.addEventListener("pointerdown", (e) => {
+  if (e.target === scrim) closeSignOutDialog();
+});
+scrim.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSignOutDialog();
+  } else if (e.key === "Tab") {
+    const buttons = [$("signout-cancel"), $("signout-confirm")];
+    const i = buttons.indexOf(document.activeElement as HTMLElement);
+    e.preventDefault();
+    buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length].focus();
+  }
+});
+
+$("signout-confirm").onclick = async () => {
+  const confirm = $<HTMLButtonElement>("signout-confirm");
+  confirm.disabled = true;
   const r = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+  confirm.disabled = false;
   if (!r?.ok) {
+    closeSignOutDialog();
     notify(`Sign out failed (${failure(r)}). You are still signed in.`);
     return;
   }
@@ -462,17 +517,20 @@ $("signout").onclick = async () => {
   location.replace("/");
 };
 
+function initialsOf(name: string, login: string): string {
+  const words = (name || login).trim().split(/\s+/).filter(Boolean);
+  const first = (w: string) => Array.from(w)[0] ?? "";
+  const letters = words.length > 1 ? first(words[0]) + first(words[1]) : Array.from(words[0] ?? "?").slice(0, 2).join("");
+  return letters.toUpperCase();
+}
+
 function renderMe(me: Me) {
-  const img = $<HTMLImageElement>("me-avatar");
-  img.src = me.avatarUrl.startsWith("https://avatars.githubusercontent.com/") ? me.avatarUrl : "";
-  $("me-name").textContent = me.name;
-  const tick = () => {
-    const mins = Math.max(0, Math.round((me.expiresAt - Date.now()) / 60_000));
-    $("me-sub").textContent = `${me.login} · ${Math.floor(mins / 60)}h ${mins % 60}m left`;
-    if (mins <= 0) location.reload();
-  };
-  tick();
-  setInterval(tick, 30_000);
+  $("me-initials").textContent = initialsOf(me.name, me.login);
+  $("me-login").textContent = me.login;
+  $("umenu-login").textContent = me.login;
+  setInterval(() => {
+    if (me.expiresAt <= Date.now()) location.reload();
+  }, 30_000);
 }
 
 (async () => {

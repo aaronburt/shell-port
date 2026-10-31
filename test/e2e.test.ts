@@ -121,7 +121,7 @@ before(async () => {
       if (code !== "good") throw new Error("bad code");
       const fixed: Record<string, number> = { mallory: 999, "old-name": 4242, "new-name": 4242, pp1: 5001, pp2: 5002, pp3: 5003, "throttle-user": 5004, bystander: 5005 };
       const id = fixed[nextUser] ?? 42388542;
-      return { id, login: nextUser, name: nextUser, avatarUrl: "https://avatars.githubusercontent.com/u/1" };
+      return { id, login: nextUser, name: nextUser };
     },
   });
   await new Promise<void>((r) => app.server.listen(port, "127.0.0.1", () => r()));
@@ -295,8 +295,6 @@ test("terminal round trip, resize and exit", async () => {
   await t.waitFor(() => t.out.includes("HELLO"));
   t.ws.send(JSON.stringify({ t: "resize", cols: 120, rows: 40 }));
   await t.waitFor(() => lastWindow?.cols === 120 && lastWindow?.rows === 40);
-  t.ws.send(JSON.stringify({ t: "ping", ts: 42 }));
-  await t.waitFor(() => t.json.some((m) => m.t === "pong" && m.ts === 42));
   t.ws.send(Buffer.from("exit\r"), { binary: true });
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
 });
