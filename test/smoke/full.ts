@@ -7,6 +7,7 @@ import net from "node:net";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import WebSocket from "ws";
+import { Client as SshClient } from "ssh2";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { validateConfig } from "../../src/server/config.js";
 import { base32Encode, hotp } from "../../src/server/totp.js";
@@ -327,10 +328,24 @@ test("several terminals on one session are independent", async () => {
   await settle(a, b);
 });
 
-async function sftpFixture(t: Term, tag: string) {
-  await t.waitFor("shell prompt", () => /\$ $/.test(t.out));
-  t.type(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && yes aaaaaaaaa | head -c 300000 > ~/fx-${tag}/long.txt && printf 'a\\0b' > ~/fx-${tag}/blob.bin && echo ready-$((6*7))-${tag}\n`);
-  await t.waitFor("fixture files", () => new RegExp(`\\nready-42-${tag}`).test(t.out), 20_000);
+function remoteExec(cmd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const c = new SshClient();
+    let out = "";
+    c.on("ready", () => {
+      c.exec(cmd, (err, stream) => {
+        if (err) { c.end(); return reject(err); }
+        stream.on("data", (d: Buffer) => { out += d.toString(); });
+        stream.on("close", (code: number) => { c.end(); code === 0 ? resolve(out) : reject(new Error(`remote command failed (${code}): ${cmd}`)); });
+      });
+    });
+    c.on("error", reject);
+    c.connect({ host: "127.0.0.1", port: targets.plain.port, username: "demo", privateKey: targets.plain.privateKey, readyTimeout: 15_000 });
+  });
+}
+
+async function sftpFixture(tag: string) {
+  await remoteExec(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && yes aaaaaaaaa | head -c 300000 > ~/fx-${tag}/long.txt; printf 'a\\0b' > ~/fx-${tag}/blob.bin`);
 }
 
 test("files: a real OpenSSH host lists, views, downloads and deletes through SFTP, and refuses unsafe paths", async () => {
@@ -338,7 +353,7 @@ test("files: a real OpenSSH host lists, views, downloads and deletes through SFT
   const t = await connect(cookie, "plain");
   const info = t.json.find((m) => m.state === "connected").info;
   assert.equal(info.files, true);
-  await sftpFixture(t, "api");
+  await sftpFixture("api");
   const call = (route: string, query: Record<string, string> = {}, init: RequestInit = {}, c = cookie) =>
     fetch(`${base}/api/terminals/${info.id}/files${route}${Object.keys(query).length ? "?" + new URLSearchParams(query) : ""}`, { ...init, headers: { cookie: c, ...(init.headers as object) } });
 
@@ -380,7 +395,7 @@ test("files: a real OpenSSH host lists, views, downloads and deletes through SFT
   assert.equal((await call("", {}, {}, other)).status, 404, "another user cannot reach this terminal's files");
   assert.equal((await fetch(`${base}/api/terminals/${info.id}/files`)).status, 401);
 
-  t.type("rm -rf ~/fx-api; exit\n");
+  await remoteExec("rm -rf ~/fx-api");
   await settle(t);
 });
 
@@ -673,8 +688,7 @@ test("UI: opening a host runs a command and shows its output", async () => {
 test("UI: the folder icon on an SSH tab switches that tab between the terminal and its files", async () => {
   await ui.locator('button.host[data-host="plain"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
-  await typeLine(ui, "mkdir -p ~/fx-ui/sub && echo hello-ui > ~/fx-ui/note.txt && echo bye > ~/fx-ui/gone.txt && echo ready-$((6*7))");
-  await waitTerm(ui, /ready-42/);
+  await remoteExec("mkdir -p ~/fx-ui/sub && echo hello-ui > ~/fx-ui/note.txt && echo bye > ~/fx-ui/gone.txt");
 
   const icon = ui.locator(".tab.active .tab-files");
   assert.equal(await icon.getAttribute("aria-pressed"), "false");
@@ -737,8 +751,7 @@ test("UI: the folder icon on an SSH tab switches that tab between the terminal a
   await icon.click();
   await ui.locator(".pane:not([hidden])").waitFor();
   assert.equal(await ui.locator("#terms .files:not([hidden])").count(), 0);
-  await typeLine(ui, "test ! -e ~/fx-ui/gone.txt && test -e ~/fx-ui/note.txt && echo gone-ok-$((6*7)); rm -rf ~/fx-ui");
-  await waitTerm(ui, /gone-ok-42/);
+  await remoteExec("test ! -e ~/fx-ui/gone.txt && test -e ~/fx-ui/note.txt && rm -rf ~/fx-ui");
 });
 
 test("UI: the folder icon is hidden for hosts with files turned off", async () => {
