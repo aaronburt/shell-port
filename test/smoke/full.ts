@@ -328,8 +328,9 @@ test("several terminals on one session are independent", async () => {
 });
 
 async function sftpFixture(t: Term, tag: string) {
-  t.type(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && head -c 300000 /dev/zero | tr '\\0' 'a' > ~/fx-${tag}/long.txt && printf 'a\\0b' > ~/fx-${tag}/blob.bin && echo ready-${tag}\n`);
-  await t.waitFor("fixture files", () => new RegExp(`\\nready-${tag}`).test(t.out));
+  await t.waitFor("shell prompt", () => /\$ $/.test(t.out));
+  t.type(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && yes aaaaaaaaa | head -c 300000 > ~/fx-${tag}/long.txt && printf 'a\\0b' > ~/fx-${tag}/blob.bin && echo ready-$((6*7))-${tag}\n`);
+  await t.waitFor("fixture files", () => new RegExp(`\\nready-42-${tag}`).test(t.out), 20_000);
 }
 
 test("files: a real OpenSSH host lists, views, downloads and deletes through SFTP, and refuses unsafe paths", async () => {
