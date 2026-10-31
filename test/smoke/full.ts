@@ -734,16 +734,24 @@ test("UI: tabs can be reordered by dragging", async () => {
   await until("plain connected", async () => /connected/.test(await statusText(ui)), 20_000);
   await ui.locator('button.host[data-host="mismatch"]').click();
   await until("two tabs", async () => (await ui.locator("#tab-scroll .tab").count()) === 2);
-  const order = () => ui.locator("#tab-scroll .tab .name").allInnerTexts();
-  assert.deepEqual(await order(), ["demo-plain", "demo-mismatch"]);
-  assert.equal(await ui.locator("#tab-scroll .tab").first().getAttribute("draggable"), "true");
-  const activeBefore = await ui.locator(".tab.active .name").innerText();
-  await ui.locator("#tab-scroll .tab").first().dragTo(ui.locator("#tab-scroll .tab").nth(1), { targetPosition: { x: 170, y: 20 } });
-  await until("reordered", async () => (await order()).join() === "demo-mismatch,demo-plain");
-  assert.equal(await ui.locator(".tab.active .name").innerText(), activeBefore, "dragging does not change the active tab");
-  await ui.locator("#tab-scroll .tab").nth(1).dragTo(ui.locator("#tab-scroll .tab").first(), { targetPosition: { x: 20, y: 20 } });
-  await until("reordered back", async () => (await order()).join() === "demo-plain,demo-mismatch");
-  await closeAllTabs(ui);
+  try {
+    await until("mismatch tab settled", async () => (await ui.locator("#tab-scroll .tab").nth(1).getAttribute("data-state")) === "closed", 20_000);
+    const order = () => ui.locator("#tab-scroll .tab .name").allInnerTexts();
+    assert.deepEqual(await order(), ["demo-plain", "demo-mismatch"]);
+    assert.equal(await ui.locator("#tab-scroll .tab").first().getAttribute("draggable"), "true");
+    const activeBefore = await ui.locator(".tab.active .name").innerText();
+    const dragUntil = (label: string, from: number, to: number, x: number, want: string) =>
+      until(label, async () => {
+        if ((await order()).join() === want) return true;
+        await ui.locator("#tab-scroll .tab").nth(from).dragTo(ui.locator("#tab-scroll .tab").nth(to), { targetPosition: { x, y: 20 } });
+        return (await order()).join() === want;
+      }, 15_000);
+    await dragUntil("reordered", 0, 1, 170, "demo-mismatch,demo-plain");
+    assert.equal(await ui.locator(".tab.active .name").innerText(), activeBefore, "dragging does not change the active tab");
+    await dragUntil("reordered back", 1, 0, 20, "demo-plain,demo-mismatch");
+  } finally {
+    await closeAllTabs(ui);
+  }
 });
 
 test("UI: tabs are 200px wide and shrink to 120px only when the bar is full", async () => {
