@@ -1116,6 +1116,25 @@ test("UI: the Hide host addresses switch hides the address line in the sidebar a
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.hideAddr")), "0");
 });
 
+test("UI: the Interface zoom stepper scales the page, is remembered, and resets", async () => {
+  await openAccount(ui);
+  await ui.locator("#zoom-in").click();
+  await ui.locator("#zoom-in").click();
+  assert.equal(await ui.locator("#zoom-reset").textContent(), "120%");
+  assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "1.2");
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.zoom")), "120");
+  await ui.keyboard.press("Escape");
+  await ui.goto(base + "/");
+  await ui.waitForSelector("#hosts .host");
+  assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "1.2", "the zoom survives a reload");
+  await openAccount(ui);
+  await ui.locator("#zoom-reset").click();
+  assert.equal(await ui.locator("#zoom-reset").textContent(), "100%");
+  assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "");
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.zoom")), "100");
+  await ui.keyboard.press("Escape");
+});
+
 test("UI: Sign out asks first, and Cancel, Escape and the backdrop all keep the session", async () => {
   const sid = (await sidOf(uiCtx))!;
   const dialog = ui.locator("#signout-dialog");
