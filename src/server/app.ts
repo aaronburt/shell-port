@@ -11,6 +11,7 @@ import { authorizeUrl, exchangeCode, type GitHubUser } from "./github.js";
 import { openTerminal, type TerminalInfo, type TerminalTiming } from "./proxy.js";
 import { audit } from "./log.js";
 import { ActivityLog, sidTag } from "./activity.js";
+import * as files from "./sftp.js";
 
 const PERMISSIONS_POLICY = [
   "accelerometer", "autoplay", "bluetooth", "camera", "display-capture", "geolocation", "gyroscope",
@@ -244,6 +245,83 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       })),
     );
   });
+
+  const MAX_DOWNLOADS_PER_TERMINAL = 2;
+  const downloading = new Map<string, number>();
+
+  const fileRoute = (
+    op: string,
+    handler: (a: { req: Request; res: Response; term: TerminalInfo; sftp: Awaited<ReturnType<TerminalInfo["sftp"]>>; s: UserSession; log: Record<string, unknown> }) => Promise<void>,
+  ) => async (req: Request, res: Response) => {
+    const s: UserSession = res.locals.session;
+    const fetchSite = req.headers["sec-fetch-site"];
+    if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") return res.status(403).json({ error: "bad_origin" });
+    const term = [...(terminalsBySession.get(s.id) ?? [])].find((t) => t.id === req.params.id);
+    if (!term) return res.status(404).json({ error: "not_found" });
+    const log = { user: s.login, host: term.hostId, ip: ipOf(req) };
+    try {
+      const sftp = await term.sftp();
+      term.touch();
+      await handler({ req, res, term, sftp, s, log });
+    } catch (e) {
+      const err = files.describeError(e);
+      audit("sftp.error", { ...log, op, error: err.code });
+      if (!res.headersSent) res.status(err.status).json({ error: err.code });
+      else res.destroy();
+    }
+  };
+
+  const queryPath = (req: Request) => files.cleanPath(typeof req.query.path === "string" ? req.query.path : undefined);
+
+  app.get("/api/terminals/:id/files", requireSession, fileRoute("list", async ({ req, res, sftp, log }) => {
+    const dir = typeof req.query.path === "string" && req.query.path ? queryPath(req) : await files.home(sftp);
+    const { entries, truncated } = await files.list(sftp, dir);
+    audit("sftp.list", { ...log, path: dir, entries: entries.length });
+    res.json({ path: dir, entries, truncated, maxDownloadBytes: cfg.limits.maxDownloadMB * 1024 * 1024 });
+  }));
+
+  app.get("/api/terminals/:id/files/view", requireSession, fileRoute("view", async ({ req, res, sftp, log }) => {
+    const file = queryPath(req);
+    const p = await files.preview(sftp, file);
+    audit("sftp.view", { ...log, path: file, size: p.size });
+    res.json({ path: file, ...p });
+  }));
+
+  app.get("/api/terminals/:id/files/download", requireSession, fileRoute("download", async ({ req, res, term, sftp, log }) => {
+    const file = queryPath(req);
+    const size = await files.fileSize(sftp, file);
+    if (size > cfg.limits.maxDownloadMB * 1024 * 1024) throw new files.FileError(413, "too_large");
+    const active = downloading.get(term.id) ?? 0;
+    if (active >= MAX_DOWNLOADS_PER_TERMINAL) throw new files.FileError(429, "too_many_downloads");
+    downloading.set(term.id, active + 1);
+    const name = files.downloadName(file);
+    res.status(200);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Length", String(size));
+    res.setHeader("Content-Disposition", `attachment; filename="${name.ascii}"; filename*=UTF-8''${name.utf8}`);
+    audit("sftp.download", { ...log, path: file, size });
+    const stream = sftp.createReadStream(file);
+    let sent = 0;
+    const done = () => {
+      const left = (downloading.get(term.id) ?? 1) - 1;
+      left > 0 ? downloading.set(term.id, left) : downloading.delete(term.id);
+      stream.destroy();
+    };
+    res.once("close", () => {
+      done();
+      audit("sftp.download_end", { ...log, path: file, bytes: sent, complete: sent === size });
+    });
+    stream.on("data", (c: Buffer) => { sent += c.length; term.touch(); });
+    stream.on("error", () => res.destroy());
+    stream.pipe(res);
+  }));
+
+  app.post("/api/terminals/:id/files/delete", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), fileRoute("delete", async ({ req, res, sftp, log }) => {
+    const target = files.cleanPath(req.body?.path);
+    const kind = await files.remove(sftp, target);
+    audit("sftp.delete", { ...log, path: target, kind });
+    res.json({ deleted: target });
+  }));
 
   app.use("/assets", express.static(path.join(opts.publicDir, "assets"), {
     index: false,

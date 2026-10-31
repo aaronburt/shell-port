@@ -41,10 +41,14 @@
       </div>
       <aside class="drawer" id="drawer" aria-label="Session details">
         <div class="drawer-body">
-          <div class="drawer-head split"><h5>Session</h5><button class="tool" id="close-session" hidden>Close session</button></div>
+          <div class="drawer-head"><h5>Session</h5></div>
           <dl class="kv" id="kv"></dl>
-          <div class="drawer-head split"><h5>Sign-ins</h5><button class="tool" id="signout-others" hidden>Sign out others</button></div>
+          <div class="drawer-head"><h5>Sign-ins</h5></div>
           <div class="acts" id="signins"></div>
+          <div class="drawer-foot">
+            <button class="btn ghost" id="signout-others" type="button" hidden>Sign out others</button>
+            <button class="btn ghost" id="close-session" type="button" hidden>Close session</button>
+          </div>
         </div>
       </aside>
     </div>

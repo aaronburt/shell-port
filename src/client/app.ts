@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { feedPassphrase } from "./passphrase.js";
+import { FilesPane } from "./files.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
 interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number }
@@ -11,7 +12,7 @@ interface Signin {
   session?: string; current?: boolean; active?: boolean; expiresAt?: number;
 }
 type State = "connecting" | "connected" | "closed";
-interface Info { host: string; user: string; auth: string; cipher: string; hostKey: string; since: string }
+interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; cipher: string; hostKey: string; since: string }
 
 interface Tab {
   key: string;
@@ -25,6 +26,8 @@ interface Tab {
   info?: Info;
   reason?: string;
   passphrase?: string;
+  mode: "term" | "files";
+  files: FilesPane;
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -130,7 +133,7 @@ function renderTabs() {
   const el = $("tab-scroll");
   el.innerHTML = tabs.map((t) => `
     <button role="tab" aria-selected="${t === active}" class="tab ${t === active ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${t.state}" title="${esc(t.host.addr)}">
-      <span class="dot ${t.state === "connected" ? "" : t.state}"></span><span class="name">${esc(t.title)}</span>
+      <span class="dot ${t.state === "connected" ? "" : t.state}"></span><span class="name">${esc(t.title)}</span>${canBrowse(t) ? `<span class="tab-files ${t.mode === "files" ? "on" : ""}" role="button" tabindex="0" data-files="${t.key}" aria-label="Files on ${esc(t.host.name)}" aria-pressed="${t.mode === "files"}" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>` : ""}
     </button>`).join("");
   el.querySelector(".tab.active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
   $("empty").hidden = tabs.length > 0;
@@ -139,9 +142,40 @@ function renderTabs() {
 const tabOf = (e: Event) => (e.target as HTMLElement).closest<HTMLElement>("[data-tab]");
 let dragKey: string | undefined;
 
-$("tab-scroll").addEventListener("click", (e) => {
-  const tab = tabs.find((x) => x.key === tabOf(e)?.dataset.tab);
-  if (tab) activate(tab);
+const canBrowse = (t: Tab) => t.state === "connected" && !!t.info?.id && t.info.files !== false;
+
+function setMode(tab: Tab, mode: Tab["mode"]) {
+  tab.mode = mode;
+  if (tab !== active) return activate(tab);
+  applyMode();
+  renderTabs();
+}
+
+function applyMode() {
+  for (const t of tabs) {
+    const showing = t === active;
+    const files = showing && t.mode === "files";
+    t.pane.hidden = !showing || files;
+    if (files) t.files.show(); else t.files.hide();
+  }
+  const t = active;
+  if (!t) return;
+  requestAnimationFrame(() => { if (t.mode === "files") return; t.fit.fit(); t.term.focus(); });
+}
+
+function onTabActivate(e: Event) {
+  const files = (e.target as HTMLElement).closest<HTMLElement>("[data-files]");
+  const tab = tabs.find((x) => x.key === (files?.dataset.files ?? tabOf(e)?.dataset.tab));
+  if (!tab) return;
+  if (files) {
+    e.stopPropagation();
+    e.preventDefault();
+    setMode(tab, tab.mode === "files" ? "term" : "files");
+  } else activate(tab);
+}
+$("tab-scroll").addEventListener("click", onTabActivate);
+$("tab-scroll").addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).closest("[data-files]")) onTabActivate(e);
 });
 $("tab-scroll").addEventListener("dragstart", (e) => {
   const el = tabOf(e);
@@ -206,7 +240,14 @@ function openTab(h: Host) {
   term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
   term.open(pane.querySelector(".xt")!);
 
-  const tab: Tab = { key: String(++seq), host: h, title: titleFor(h), term, fit, pane, state: "connecting" };
+  const tab: Tab = {
+    key: String(++seq), host: h, title: titleFor(h), term, fit, pane, state: "connecting", mode: "term",
+    files: new FilesPane({
+      terminalId: () => (tab.state === "connected" ? tab.info?.id : undefined),
+      where: () => `${tab.info?.user ?? tab.host.addr.split("@")[0]}@${tab.host.addr.split("@").slice(1).join("@")}`,
+    }),
+  };
+  $("terms").appendChild(tab.files.el);
   tabs.push(tab);
 
   term.attachCustomKeyEventHandler((e) => handleTermKey(e, tab));
@@ -253,6 +294,7 @@ function connect(tab: Tab) {
   tab.passphrase = undefined;
   tab.state = "connecting";
   tab.info = undefined;
+  tab.files.reset();
   tab.reason = undefined;
   tab.term.write(`\x1b[90mConnecting to ${tab.host.addr}…\x1b[0m\r\n`);
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -275,6 +317,7 @@ function connect(tab: Tab) {
     if (msg.t === "error") { tab.term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`); return; }
     if (msg.t === "status") {
       tab.state = msg.state;
+      if (msg.state !== "connected" && tab.mode === "files") { tab.mode = "term"; applyMode(); }
       if (msg.info) tab.info = msg.info;
       if (msg.reason) tab.reason = msg.reason;
       if (msg.state === "connected") tab.fit.fit();
@@ -284,6 +327,7 @@ function connect(tab: Tab) {
   ws.onclose = (ev) => {
     if (tab.ws !== ws) return;
     tab.passphrase = undefined;
+    if (tab.mode === "files") { tab.mode = "term"; applyMode(); }
     if (tab.state !== "closed") {
       tab.state = "closed";
       tab.reason ||= ev.reason || (ev.code === 1006 ? "Could not reach the Shellport server, or you were signed out" : "Disconnected");
@@ -318,9 +362,8 @@ function renderAll() {
 
 function activate(tab: Tab) {
   active = tab;
-  for (const t of tabs) t.pane.hidden = t !== tab;
   renderAll();
-  requestAnimationFrame(() => { tab.fit.fit(); tab.term.focus(); });
+  applyMode();
 }
 
 function closeTab(tab: Tab) {
@@ -330,6 +373,7 @@ function closeTab(tab: Tab) {
   tab.ws = undefined;
   ws?.close();
   tab.term.dispose();
+  tab.files.dispose();
   tab.pane.remove();
   if (active === tab) {
     active = tabs[Math.min(i, tabs.length - 1)];

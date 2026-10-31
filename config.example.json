@@ -16,7 +16,8 @@
   "limits": {
     "maxTerminalsPerUser": 10,
     "idleTimeoutMinutes": 30,
-    "loginAttemptsPer15Min": 30
+    "loginAttemptsPer15Min": 30,
+    "maxDownloadMB": 256
   },
   "security": { "allowUnpinnedHostKeys": false },
   "hosts": [

@@ -13,6 +13,7 @@ import { feedPassphrase } from "../src/client/passphrase.js";
 import { base32Encode, hotp } from "../src/server/totp.js";
 import { createApp, clientIp } from "../src/server/app.js";
 import { generateEd25519 } from "./keys.js";
+import { serveSftp } from "./sftp-fake.js";
 
 const { Server, utils } = ssh2;
 
@@ -25,6 +26,18 @@ const plainKey = generateEd25519();
 const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-test-"));
 const FLOOD_BYTES = 24 * 1024 * 1024;
 const FLOOD = Buffer.alloc(FLOOD_BYTES, "abcdefghijklmnopqrstuvwxyz0123456789\n");
+const sftpRoot = path.join(secretDir, "remote");
+for (const d of ["home/demo/docs", "home/demo/empty", "home/demo/full"]) fs.mkdirSync(path.join(sftpRoot, d), { recursive: true });
+fs.writeFileSync(path.join(sftpRoot, "home/demo/notes.txt"), "hello from notes\n");
+fs.writeFileSync(path.join(sftpRoot, "home/demo/docs/a.txt"), "doc a");
+fs.writeFileSync(path.join(sftpRoot, "home/demo/full/x.txt"), "x");
+fs.writeFileSync(path.join(sftpRoot, "home/demo/blob.bin"), Buffer.from([1, 2, 0, 3, 4]));
+fs.writeFileSync(path.join(sftpRoot, "home/demo/long.txt"), "0123456789".repeat(40_000));
+fs.writeFileSync(path.join(sftpRoot, "home/demo/huge.dat"), Buffer.alloc(1536 * 1024, 7));
+fs.writeFileSync(path.join(sftpRoot, "home/demo/déjà vu \"q\".txt"), "unicode");
+fs.writeFileSync(path.join(sftpRoot, "home/demo/trash1.txt"), "bye");
+fs.writeFileSync(path.join(sftpRoot, "home/demo/trash2.txt"), "bye");
+fs.symlinkSync("docs", path.join(sftpRoot, "home/demo/docs-link"));
 let sshPort = 0;
 let lastPty: any;
 let lastWindow: any;
@@ -38,6 +51,7 @@ const sshd = new Server({ hostKeys: [hostKey.private] }, (client) => {
   client.on("ready", () => {
     client.on("session", (accept) => {
       const session = accept();
+      session.on("sftp", (acc) => serveSftp(sftpRoot, acc));
       session.on("pty", (acc, _rej, info) => { lastPty = info; acc?.(); });
       session.on("window-change", (acc, _rej, info) => { lastWindow = info; acc?.(); });
       session.on("shell", (acc) => {
@@ -97,10 +111,12 @@ before(async () => {
       { github: 4242, totpSecret: base32Encode(TOTP_KEY) },
       ...["pp1", "pp2", "pp3", "throttle-user", "bystander"].map((github) => ({ github, totpSecret: base32Encode(TOTP_KEY) })),
     ],
-    limits: { maxTerminalsPerUser: 3, loginAttemptsPer15Min: 100 },
+    limits: { maxTerminalsPerUser: 3, loginAttemptsPer15Min: 100, maxDownloadMB: 1 },
     hosts: [
       { id: "fake", name: "fake-host", group: "Test", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "password", password: { env: "TEST_PW" } }, hostKeyFingerprints: [fp] },
+      { id: "nofiles", host: "127.0.0.1", port: sshPort, username: "deploy", files: false,
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp] },
       { id: "locked", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "key", privateKey: userKey.private }, hostKeyFingerprints: [fp] },
       { id: "wrongkey", host: "127.0.0.1", port: sshPort, username: "deploy",
@@ -267,7 +283,7 @@ test("signed-in user gets the app and only display fields for permitted hosts", 
   const cookie = await signIn("AaronBurt");
   assert.match(await (await fetch(base + "/", { headers: { cookie } })).text(), /\/assets\/app-[A-Z0-9]{8}\.js/);
   const hosts = await (await fetch(base + "/api/hosts", { headers: { cookie } })).json();
-  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "locked", "wrongkey", "badpw", "filepw"]);
+  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "nofiles", "locked", "wrongkey", "badpw", "filepw"]);
   const raw = JSON.stringify(hosts);
   assert.doesNotMatch(raw, /s3cret|SHA256|password/);
   assert.equal(hosts[0].addr, `deploy@127.0.0.1:${sshPort}`);
@@ -759,6 +775,213 @@ test("a large paste reaches the host intact while the host stops reading for a m
   assert.ok(t.out.includes(`PASTE ${pasted.length} ${sha256(pasted)}`), `the host received a different paste: ${t.out.slice(-120)}`);
   t.ws.close();
   await pause(200);
+});
+
+async function terminalWithFiles(cookie: string, host = "fake") {
+  const t = openWs(cookie, host);
+  await t.waitFor(() => t.json.some((m) => m.state === "connected"));
+  const id = t.json.find((m) => m.state === "connected").info.id as string;
+  const files = (route = "", query: Record<string, string> = {}, init: RequestInit = {}) =>
+    fetch(`${base}/api/terminals/${id}/files${route}${Object.keys(query).length ? "?" + new URLSearchParams(query) : ""}`, { ...init, headers: { cookie, ...(init.headers as object) } });
+  const del = (p: unknown, origin: string | null = base) =>
+    files("/delete", {}, { method: "POST", headers: { ...(origin ? { origin } : {}), "content-type": "application/json" }, body: JSON.stringify({ path: p }) });
+  return { t, id, files, del };
+}
+
+test("files: the connected status carries an unguessable terminal id and whether files are on", async () => {
+  const cookie = await signIn();
+  const a = await terminalWithFiles(cookie);
+  assert.match(a.id, /^[A-Za-z0-9_-]{20,}$/);
+  assert.equal(a.t.json.find((m) => m.state === "connected").info.files, true);
+  const b = await terminalWithFiles(cookie, "nofiles");
+  assert.equal(b.t.json.find((m) => m.state === "connected").info.files, false);
+  const r = await b.files();
+  assert.equal(r.status, 403);
+  assert.deepEqual(await r.json(), { error: "files_disabled" });
+  a.t.ws.close();
+  b.t.ws.close();
+});
+
+test("files: listing starts in the home folder, tells folders from files and follows folder links", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  const r = await files();
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-store");
+  const body = await r.json();
+  assert.equal(body.path, "/home/demo");
+  assert.equal(body.maxDownloadBytes, 1024 * 1024);
+  const by = Object.fromEntries(body.entries.map((e: any) => [e.name, e]));
+  assert.equal(by["docs"].kind, "dir");
+  assert.equal(by["docs-link"].kind, "dir");
+  assert.equal(by["notes.txt"].kind, "file");
+  assert.equal(by["notes.txt"].size, 17);
+  assert.match(by["notes.txt"].mode, /^-[rwx-]{9}$/);
+  assert.ok(!("." in by) && !(".." in by));
+  const sub = await (await files("", { path: "/home/demo/docs" })).json();
+  assert.deepEqual(sub.entries.map((e: any) => e.name), ["a.txt"]);
+  assert.equal((await files("", { path: "/home/demo/nope" })).status, 404);
+  t.ws.close();
+});
+
+test("files: only the owning session can reach a terminal's files", async () => {
+  const cookie = await signIn();
+  const { t, id, files } = await terminalWithFiles(cookie);
+  const anon = await fetch(`${base}/api/terminals/${id}/files`);
+  assert.equal(anon.status, 401);
+  const other = await signIn("other");
+  const stolen = await fetch(`${base}/api/terminals/${id}/files`, { headers: { cookie: other } });
+  assert.equal(stolen.status, 404);
+  const second = await signIn();
+  assert.equal((await fetch(`${base}/api/terminals/${id}/files`, { headers: { cookie: second } })).status, 404, "another sign-in of the same user is a different session");
+  assert.equal((await fetch(`${base}/api/terminals/not-a-real-id/files`, { headers: { cookie } })).status, 404);
+  assert.equal((await files()).status, 200);
+  t.ws.close();
+});
+
+test("files: paths must be absolute, free of .. and control characters, and of sane length", async () => {
+  const cookie = await signIn();
+  const { t, files, del } = await terminalWithFiles(cookie);
+  const bad = ["relative/path", "/home/../etc/passwd", "/home/demo/..", "/a\u0000b", "/a\nb", "/" + "x".repeat(5000)];
+  for (const p of bad) {
+    for (const route of ["", "/view", "/download"]) {
+      const r = await files(route, { path: p });
+      assert.equal(r.status, 400, `${route} ${JSON.stringify(p.slice(0, 20))}`);
+      assert.deepEqual(await r.json(), { error: "bad_path" });
+    }
+    assert.equal((await del(p)).status, 400);
+  }
+  assert.equal((await files("/view")).status, 400, "view needs a path");
+  assert.equal((await del(undefined)).status, 400);
+  assert.equal((await del("/")).status, 400, "the root can never be deleted");
+  t.ws.close();
+});
+
+test("files: view returns text, flags binary files and caps the preview", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  const note = await (await files("/view", { path: "/home/demo/notes.txt" })).json();
+  assert.deepEqual([note.text, note.truncated, note.binary, note.size], ["hello from notes\n", false, false, 17]);
+  const bin = await (await files("/view", { path: "/home/demo/blob.bin" })).json();
+  assert.deepEqual([bin.binary, bin.text], [true, ""]);
+  const long = await (await files("/view", { path: "/home/demo/long.txt" })).json();
+  assert.equal(long.truncated, true);
+  assert.equal(long.size, 400_000);
+  assert.equal(long.text.length, 256 * 1024);
+  const dir = await files("/view", { path: "/home/demo/docs" });
+  assert.equal(dir.status, 400);
+  assert.deepEqual(await dir.json(), { error: "not_a_file" });
+  t.ws.close();
+});
+
+test("files: download streams the file as an attachment, refuses folders, oversize files and cross-site requests", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  const ok = await files("/download", { path: "/home/demo/notes.txt" });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("content-type"), "application/octet-stream");
+  assert.equal(ok.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(ok.headers.get("content-length"), "17");
+  assert.match(ok.headers.get("content-disposition")!, /^attachment; filename="notes\.txt"/);
+  assert.equal(await ok.text(), "hello from notes\n");
+  const odd = await files("/download", { path: "/home/demo/déjà vu \"q\".txt" });
+  const cd = odd.headers.get("content-disposition")!;
+  assert.match(cd, /filename="d_j_ vu _q_\.txt"/);
+  assert.match(cd, /filename\*=UTF-8''d%C3%A9j%C3%A0%20vu%20%22q%22\.txt/);
+  assert.equal(await odd.text(), "unicode");
+  const big = await files("/download", { path: "/home/demo/huge.dat" });
+  assert.equal(big.status, 413);
+  assert.deepEqual(await big.json(), { error: "too_large" });
+  assert.equal((await files("/download", { path: "/home/demo/docs" })).status, 400);
+  const cross = await files("/download", { path: "/home/demo/notes.txt" }, { headers: { "sec-fetch-site": "cross-site" } });
+  assert.equal(cross.status, 403);
+  assert.equal((await files("", {}, { headers: { "sec-fetch-site": "same-site" } })).status, 403);
+  assert.equal((await files("/download", { path: "/home/demo/notes.txt" }, { headers: { "sec-fetch-site": "none" } })).status, 200);
+  t.ws.close();
+});
+
+test("files: delete needs the same origin, removes files and empty folders, and refuses non-empty folders", async () => {
+  const cookie = await signIn();
+  const { t, files, del } = await terminalWithFiles(cookie);
+  assert.equal((await del("/home/demo/trash1.txt", null)).status, 403);
+  assert.equal((await del("/home/demo/trash1.txt", "https://evil.example")).status, 403);
+  assert.ok(fs.existsSync(path.join(sftpRoot, "home/demo/trash1.txt")));
+  const ok = await del("/home/demo/trash1.txt");
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { deleted: "/home/demo/trash1.txt" });
+  assert.ok(!fs.existsSync(path.join(sftpRoot, "home/demo/trash1.txt")));
+  const names = (await (await files()).json()).entries.map((e: any) => e.name);
+  assert.ok(!names.includes("trash1.txt"));
+  assert.equal((await del("/home/demo/trash1.txt")).status, 404);
+  const full = await del("/home/demo/full");
+  assert.equal(full.status, 409);
+  assert.deepEqual(await full.json(), { error: "cannot_remove" });
+  assert.ok(fs.existsSync(path.join(sftpRoot, "home/demo/full/x.txt")));
+  assert.equal((await del("/home/demo/empty")).status, 200);
+  assert.ok(!fs.existsSync(path.join(sftpRoot, "home/demo/empty")));
+  t.ws.close();
+});
+
+test("files: every list, view, download and delete is audit logged with the user, host and path", async () => {
+  const cookie = await signIn();
+  const { t, files, del } = await terminalWithFiles(cookie);
+  const lines: any[] = [];
+  const orig = console.log;
+  console.log = (line: unknown) => { try { lines.push(JSON.parse(String(line))); } catch { orig(line); } };
+  try {
+    await files();
+    await files("/view", { path: "/home/demo/notes.txt" });
+    await (await files("/download", { path: "/home/demo/notes.txt" })).text();
+    await del("/home/demo/trash2.txt");
+    await files("", { path: "/home/demo/missing" });
+    await new Promise((r) => setTimeout(r, 50));
+  } finally {
+    console.log = orig;
+  }
+  const events = lines.map((l) => l.event);
+  for (const e of ["sftp.list", "sftp.view", "sftp.download", "sftp.download_end", "sftp.delete", "sftp.error"]) assert.ok(events.includes(e), `${e} logged: ${events}`);
+  const d = lines.find((l) => l.event === "sftp.delete");
+  assert.deepEqual([d.user, d.host, d.path, d.kind], ["aaronburt", "fake", "/home/demo/trash2.txt", "file"]);
+  assert.equal(lines.find((l) => l.event === "sftp.download_end").complete, true);
+  assert.equal(lines.find((l) => l.event === "sftp.error").error, "not_found");
+  assert.ok(!JSON.stringify(lines).includes("s3cret"));
+  t.ws.close();
+});
+
+test("files: closing the terminal ends file access to it", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  assert.equal((await files()).status, 200);
+  t.ws.close();
+  await t.waitFor(() => t.ws.readyState === WebSocket.CLOSED);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await files()).status, 404);
+});
+
+test("files: using the file explorer keeps the terminal from being closed as idle", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  timing.idleTimeoutMs = 700;
+  try {
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal((await files()).status, 200);
+    }
+    assert.equal(t.closed(), undefined);
+  } finally {
+    delete timing.idleTimeoutMs;
+    t.ws.close();
+  }
+});
+
+test("config: host files flag and the download limit are validated", () => {
+  const base = { server: { publicUrl: "http://x.test" }, github: { clientId: "i", clientSecret: "s" }, users: [{ github: "a", totpSecret: base32Encode(crypto.randomBytes(20)) }] };
+  const host = (extra: object) => ({ id: "h", host: "h", username: "u", auth: { type: "password", password: "p" }, hostKeyFingerprints: ["SHA256:x"], ...extra });
+  assert.equal(validateConfig({ ...base, hosts: [host({})] }, ".").hosts[0].files, true);
+  assert.equal(validateConfig({ ...base, hosts: [host({ files: false })] }, ".").hosts[0].files, false);
+  assert.throws(() => validateConfig({ ...base, hosts: [host({ files: "no" })] }, "."), /files must be true or false/);
+  assert.equal(validateConfig({ ...base, hosts: [host({})] }, ".").limits.maxDownloadMB, 256);
+  for (const bad of [0, 5000, 1.5, "10"]) assert.throws(() => validateConfig({ ...base, limits: { maxDownloadMB: bad }, hosts: [host({})] }, "."), /maxDownloadMB/);
 });
 
 test("shutdown closes open terminals with a reason, stops listening and returns before the deadline", async () => {

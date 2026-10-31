@@ -26,6 +26,7 @@ export interface HostConfig {
   auth: HostAuthKey | HostAuthPassword;
   hostKeyFingerprints?: string[];
   allowedUsers?: Array<string | number>;
+  files?: boolean;
 }
 
 export interface AppConfig {
@@ -47,6 +48,7 @@ export interface AppConfig {
     maxTerminalsPerUser: number;
     idleTimeoutMinutes: number;
     loginAttemptsPer15Min: number;
+    maxDownloadMB: number;
   };
   security: {
     allowUnpinnedHostKeys: boolean;
@@ -161,6 +163,8 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
     seen.add(h.id);
     if (!h.host || !h.username) fail(`host ${h.id}: host and username are required`);
     h.name ||= h.id;
+    if (h.files !== undefined && typeof h.files !== "boolean") fail(`host ${h.id}: files must be true or false`);
+    h.files ??= true;
     h.port = intOption(h.port, `host ${h.id} port`, 22, 1, 65535);
     if (!h.auth || !["key", "password"].includes(h.auth.type)) fail(`host ${h.id}: auth.type must be key or password`);
     if (h.allowedUsers) h.allowedUsers = normalizeUsers(h.allowedUsers, `host ${h.id} allowedUsers`);
@@ -203,6 +207,7 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
       maxTerminalsPerUser: intOption(raw.limits?.maxTerminalsPerUser, "limits.maxTerminalsPerUser", 10, 1),
       idleTimeoutMinutes: intOption(raw.limits?.idleTimeoutMinutes, "limits.idleTimeoutMinutes", 30, 0),
       loginAttemptsPer15Min: intOption(raw.limits?.loginAttemptsPer15Min, "limits.loginAttemptsPer15Min", 30, 1),
+      maxDownloadMB: intOption(raw.limits?.maxDownloadMB, "limits.maxDownloadMB", 256, 1, 4096),
     },
     security,
     hosts,
