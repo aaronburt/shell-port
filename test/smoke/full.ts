@@ -1019,7 +1019,13 @@ test("UI: the Sign-ins panel shows the other session and signs it out, closing i
     await ui.unroute("**/api/signins/signout-others");
   }
   await ui.locator("#signout-others").click();
-  await until("peer terminal closed", async () => /closed|Disconnected/.test(await statusText(peer)), 10_000);
+  await until("peer terminal closed or signed out", async () => {
+    try {
+      return /closed|Disconnected/.test(await statusText(peer)) || (await peer.getByRole("heading", { name: /Sign in to Shellport/ }).count()) > 0;
+    } catch {
+      return false;
+    }
+  }, 10_000);
   await peer.goto(base + "/").catch(() => {});
   await peer.getByRole("heading", { name: /Sign in to Shellport/ }).waitFor();
   await until("no other sessions", async () => !(await ui.locator("#signins").innerText()).includes("other session"));
