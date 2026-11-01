@@ -78,13 +78,17 @@ export function createMigrateApp(opts: MigrateOptions) {
   app.get("/healthz", (_req, res) => res.json({ ok: true, migrate: true }));
   app.get("/", (_req, res) => res.sendFile(path.join(opts.publicDir, "migrate.html")));
   app.get("/api/migrate/status", (_req, res) => {
-    let writable = true;
-    try {
-      fs.accessSync(path.dirname(path.resolve(opts.vaultPath)), fs.constants.W_OK);
-    } catch {
-      writable = false;
+    const dir = path.dirname(path.resolve(opts.vaultPath));
+    let reason: "missing" | "readonly" | undefined;
+    if (!fs.existsSync(dir)) reason = "missing";
+    else {
+      try {
+        fs.accessSync(dir, fs.constants.W_OK);
+      } catch {
+        reason = "readonly";
+      }
     }
-    res.json({ configPath: opts.configPath, vaultPath: opts.vaultPath, writable });
+    res.json({ configPath: opts.configPath, vaultPath: path.resolve(opts.vaultPath), writable: !reason, reason });
   });
 
   app.post("/api/migrate", requireSameOrigin, body, requireToken, (req, res) => {
