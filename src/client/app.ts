@@ -49,6 +49,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 let hosts: Host[] = [];
+let canEdit = false;
 let tabs: Tab[] = [];
 let active: Tab | undefined;
 let seq = 0;
@@ -129,6 +130,7 @@ function renderHosts() {
             ${h.tag ? `<span class="tag">${esc(h.tag)}</span>` : "<span></span>"}
           </button>
           <button class="host-new" data-new="${esc(h.id)}" title="Open another session" aria-label="Open another session to ${esc(h.name)}">+</button>
+          ${canEdit ? `<button class="host-new host-edit" data-edit="${esc(h.id)}" title="Edit host" aria-label="Edit ${esc(h.name)}"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/></svg></button>` : ""}
         </div>`).join("")}</div>`).join("")
     : `<div class="none">${hosts.length ? "No hosts match." : "No hosts are configured for your account."}</div>`;
 }
@@ -910,20 +912,26 @@ function renderMe(me: Me) {
   $("acct-seal-sec").hidden = !me.sealable;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;
+  canEdit = !!me.canAddHosts;
   setInterval(() => {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
 }
 
-initAddHost({
+const hostEditor = initAddHost({
   button: $("add-host"),
   scrim: $("host-scrim"),
   groups: () => [...new Set(hosts.map((h) => h.group))],
-  onAdded: async () => {
+  onChanged: async () => {
     hosts = await api<Host[]>("/api/hosts");
-    renderHosts();
+    renderAll();
   },
   restoreFocus: () => $("add-host").focus(),
+});
+
+$("hosts").addEventListener("click", (e) => {
+  const id = (e.target as HTMLElement).closest<HTMLElement>("[data-edit]")?.dataset.edit;
+  if (id) void hostEditor.edit(id);
 });
 
 $("close-session").onclick = () => {

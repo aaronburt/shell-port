@@ -5,7 +5,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { WebSocketServer } from "ws";
 import { parseCookie, stringifySetCookie } from "cookie";
 import { findUser, hostsForUser, isAdmin, type LoadedConfig } from "./config.js";
-import { addHost, HostAdminError, listKeys, type HostStore, type KeyProbe } from "./hostadmin.js";
+import { addHost, describeHost, HostAdminError, listKeys, removeHost, updateHost, type HostStore, type KeyProbe } from "./hostadmin.js";
 import { verifyTotp } from "./totp.js";
 import { SessionStore, RateLimiter, type UserSession } from "./sessions.js";
 import { authorizeUrl, exchangeCode, type GitHubUser } from "./github.js";
@@ -267,24 +267,64 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.json(listKeys(cfg));
   });
 
-  app.post("/api/hosts", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), async (req, res) => {
-    const s: UserSession = res.locals.session;
-    if (!opts.hostStore) return res.status(409).json({ error: "storage_unavailable", message: "Hosts cannot be added from the browser on this server." });
-    if (!hostAddLimiter.hit(String(s.githubId))) return res.status(429).json({ error: "rate_limited" });
-    const body = req.body && typeof req.body === "object" ? req.body : {};
+  const hostRoute = (action: string, fn: (a: { req: Request; res: Response; s: UserSession; store: HostStore; body: Record<string, any> }) => Promise<void> | void) =>
+    async (req: Request, res: Response) => {
+      const s: UserSession = res.locals.session;
+      if (!opts.hostStore) return res.status(409).json({ error: "storage_unavailable", message: "Hosts cannot be changed from the browser on this server." });
+      if (!hostAddLimiter.hit(String(s.githubId))) return res.status(429).json({ error: "rate_limited" });
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      try {
+        await fn({ req, res, s, store: opts.hostStore, body });
+      } catch (e) {
+        if (!(e instanceof HostAdminError)) throw e;
+        audit(`host.${action}_failed`, { ip: ipOf(req), user: s.login, githubId: s.githubId, host: req.params.id, error: e.code });
+        res.status(e.status).json({ error: e.code, message: e.message });
+      }
+    };
+
+  const keySource = (body: Record<string, any>) =>
+    body.key && typeof body.key === "object" ? ("upload" in body.key ? "uploaded" : "keep" in body.key ? "kept" : "existing") : "none";
+
+  app.post("/api/hosts", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), hostRoute("add", async ({ req, res, s, store, body }) => {
+    const host = await addHost(cfg, store, body as never, opts.probeHostKey);
+    audit("host.add", {
+      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
+      key: keySource(body), store: store.kind,
+    });
+    res.status(201).json({ id: host.id });
+  }));
+
+  app.get("/api/hosts/:id", requireSession, requireAdmin, (req, res) => {
     try {
-      const host = await addHost(cfg, opts.hostStore, body, opts.probeHostKey);
-      audit("host.add", {
-        ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
-        key: body.key && typeof body.key === "object" && "upload" in body.key ? "uploaded" : "existing", store: opts.hostStore.kind,
-      });
-      res.status(201).json({ id: host.id });
+      res.json(describeHost(cfg, String(req.params.id)));
     } catch (e) {
       if (!(e instanceof HostAdminError)) throw e;
-      audit("host.add_failed", { ip: ipOf(req), user: s.login, githubId: s.githubId, error: e.code });
       res.status(e.status).json({ error: e.code, message: e.message });
     }
   });
+
+  app.put("/api/hosts/:id", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), hostRoute("edit", async ({ req, res, s, store, body }) => {
+    const host = await updateHost(cfg, store, String(req.params.id), body as never, opts.probeHostKey);
+    audit("host.edit", {
+      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
+      key: keySource(body), store: store.kind,
+    });
+    res.json({ id: host.id });
+  }));
+
+  app.delete("/api/hosts/:id", requireSession, requireAdmin, requireSameOrigin, hostRoute("delete", ({ req, res, s, store }) => {
+    const host = removeHost(cfg, store, String(req.params.id));
+    let closed = 0;
+    for (const set of [...terminals.values()]) {
+      for (const t of [...set]) {
+        if (t.hostId !== host.id) continue;
+        t.close("This host was removed");
+        closed++;
+      }
+    }
+    audit("host.delete", { ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, closedTerminals: closed, store: store.kind });
+    res.status(204).end();
+  }));
 
   const MAX_DOWNLOADS_PER_TERMINAL = 2;
   const downloading = new Map<string, number>();

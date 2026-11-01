@@ -31,11 +31,12 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .host .tag { font-family: var(--f-mono); font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
 .host-new { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 1px solid var(--line); background: var(--panel); border-radius: 5px; color: var(--muted); width: 22px; height: 22px; padding: 0; display: grid; place-items: center; font-size: 14px; line-height: 1; opacity: 0; pointer-events: none; }
 .host-new:hover { color: var(--fg); border-color: var(--accent); }
+.host-edit { right: 34px; font-size: 12px; }
 .host-row:hover .host-new, .host-row:focus-within .host-new, .host-new:focus-visible { opacity: 1; pointer-events: auto; }
 .host-row:hover .tag, .host-row:focus-within .tag { visibility: hidden; }
 @media (hover: none) {
   .host-new { opacity: 1; pointer-events: auto; }
-  .host { padding-right: 36px; }
+  .host { padding-right: 64px; }
   .host-row .tag { visibility: hidden; }
 }
 .hosts .none { color: var(--muted); font-size: 13px; padding: 12px 8px; }
@@ -167,6 +168,10 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .modal-foot .btn { padding: 8px 14px; cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
 .btn.ghost:hover { background: var(--panel-2); }
+.btn.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+.btn.ghost.danger { background: transparent; color: var(--bad); border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.btn.ghost.danger:hover { background: color-mix(in srgb, var(--bad) 12%, transparent); }
+#ah-del { margin-right: auto; }
 
 @media (min-width: 761px) {
   .ws.collapsed { grid-template-columns: 48px minmax(0,1fr); }

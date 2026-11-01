@@ -16,6 +16,8 @@ export class HostAdminError extends Error {
 export interface HostStore {
   readonly kind: "file" | "vault";
   append(host: HostConfig, pem: string | undefined): HostConfig;
+  update(id: string, host: HostConfig, pem: string | undefined): HostConfig;
+  remove(id: string): void;
 }
 
 export interface KeyEntry {
@@ -45,53 +47,99 @@ export function keyFingerprint(pem: string): string {
   return "key-" + crypto.createHash("sha256").update(pem.trim()).digest("hex").slice(0, 12);
 }
 
-export function fileStore(configPath: string): HostStore {
-  const resolved = path.resolve(configPath);
-  const dir = path.dirname(resolved);
-  return {
-    kind: "file",
-    append(host, pem) {
-      const written: string[] = [];
-      try {
-        if (pem !== undefined && host.auth.type === "key") {
-          const keyDir = path.join(dir, "keys");
-          fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
-          const file = path.join(keyDir, `${host.id}.key`);
-          fs.writeFileSync(file, pem.endsWith("\n") ? pem : pem + "\n", { mode: 0o600, flag: "wx" });
-          written.push(file);
-          host = { ...host, auth: { ...host.auth, privateKey: { file: `keys/${host.id}.key` } } };
-        }
-        const raw = JSON.parse(fs.readFileSync(resolved, "utf8"));
-        if (!Array.isArray(raw.hosts)) raw.hosts = [];
-        raw.hosts.push(host);
-        writeFileAtomic(resolved, JSON.stringify(raw, null, 2) + "\n", fs.statSync(resolved).mode & 0o777);
-        return host;
-      } catch (e) {
-        for (const f of written) try { fs.rmSync(f, { force: true }); } catch {}
-        throw new HostAdminError(500, "storage_failed", `Could not save to ${configPath}: ${(e as Error).message}`);
+const MADE_KEY = /^keys\/sp-[0-9a-f]{12}\.key$/;
+
+function refFile(h: HostConfig): string | undefined {
+  if (h.auth.type !== "key") return undefined;
+  const p = h.auth.privateKey;
+  return typeof p === "object" && p !== null && "file" in p ? p.file : undefined;
+}
+
+interface StoreIo {
+  read(): { hosts?: HostConfig[] } & Record<string, unknown>;
+  write(raw: unknown): void;
+}
+
+function makeStore(kind: "file" | "vault", where: string, dir: string, io: StoreIo): HostStore {
+  const placeKey = (host: HostConfig, pem: string | undefined, written: string[]): HostConfig => {
+    if (pem === undefined || host.auth.type !== "key") return host;
+    if (kind === "vault") return { ...host, auth: { ...host.auth, privateKey: pem } };
+    const keyDir = path.join(dir, "keys");
+    fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+    const name = `sp-${crypto.randomBytes(6).toString("hex")}.key`;
+    const file = path.join(keyDir, name);
+    fs.writeFileSync(file, pem.endsWith("\n") ? pem : pem + "\n", { mode: 0o600, flag: "wx" });
+    written.push(file);
+    return { ...host, auth: { ...host.auth, privateKey: { file: `keys/${name}` } } };
+  };
+
+  const run = (fn: (hosts: HostConfig[], written: string[]) => { host?: HostConfig; dropped?: HostConfig }): HostConfig | undefined => {
+    const written: string[] = [];
+    try {
+      const raw = io.read();
+      if (!Array.isArray(raw.hosts)) raw.hosts = [];
+      const out = fn(raw.hosts, written);
+      io.write(raw);
+      const gone = out.dropped && refFile(out.dropped);
+      if (kind === "file" && gone && MADE_KEY.test(gone) && !raw.hosts.some((h) => refFile(h) === gone)) {
+        try { fs.rmSync(path.join(dir, gone), { force: true }); } catch {}
       }
+      return out.host;
+    } catch (e) {
+      for (const f of written) try { fs.rmSync(f, { force: true }); } catch {}
+      if (e instanceof HostAdminError) throw e;
+      throw new HostAdminError(500, "storage_failed", `Could not save to ${where}: ${(e as Error).message}`);
+    }
+  };
+
+  const find = (hosts: HostConfig[], id: string) => {
+    const i = hosts.findIndex((h) => h.id === id);
+    if (i < 0) throw new HostAdminError(404, "not_found", "That host no longer exists.");
+    return i;
+  };
+
+  return {
+    kind,
+    append: (host, pem) => run((hosts, w) => {
+      const h = placeKey(host, pem, w);
+      hosts.push(h);
+      return { host: h };
+    })!,
+    update: (id, host, pem) => run((hosts, w) => {
+      const i = find(hosts, id);
+      const dropped = hosts[i];
+      const h = placeKey(host, pem, w);
+      hosts[i] = h;
+      return { host: h, dropped };
+    })!,
+    remove: (id) => {
+      run((hosts) => {
+        const i = find(hosts, id);
+        const [dropped] = hosts.splice(i, 1);
+        return { dropped };
+      });
     },
   };
 }
 
+export function fileStore(configPath: string): HostStore {
+  const resolved = path.resolve(configPath);
+  return makeStore("file", configPath, path.dirname(resolved), {
+    read: () => JSON.parse(fs.readFileSync(resolved, "utf8")),
+    write: (raw) => writeFileAtomic(resolved, JSON.stringify(raw, null, 2) + "\n", fs.statSync(resolved).mode & 0o777),
+  });
+}
+
 export function vaultStore(vaultPath: string, dek: Buffer): HostStore {
   const resolved = path.resolve(vaultPath);
-  return {
-    kind: "vault",
-    append(host, pem) {
-      try {
-        if (pem !== undefined && host.auth.type === "key") host = { ...host, auth: { ...host.auth, privateKey: pem } };
-        const file = fs.readFileSync(resolved);
-        const raw = JSON.parse(openVaultWithKey(file, dek).toString("utf8"));
-        if (!Array.isArray(raw.hosts)) raw.hosts = [];
-        raw.hosts.push(host);
-        writeFileAtomic(resolved, replaceVaultBody(file, dek, JSON.stringify(raw, null, 2)));
-        return host;
-      } catch (e) {
-        throw new HostAdminError(500, "storage_failed", `Could not save to the vault: ${(e as Error).message}`);
-      }
+  let current: Buffer;
+  return makeStore("vault", "the vault", path.dirname(resolved), {
+    read: () => {
+      current = fs.readFileSync(resolved);
+      return JSON.parse(openVaultWithKey(current, dek).toString("utf8"));
     },
-  };
+    write: (raw) => writeFileAtomic(resolved, replaceVaultBody(current, dek, JSON.stringify(raw, null, 2))),
+  });
 }
 
 export function probeHostKey(host: string, port: number, timeoutMs = 8000): Promise<string> {
@@ -205,24 +253,33 @@ function resolveKey(cfg: LoadedConfig, input: unknown, ack: boolean): { auth: Ho
   return { auth, pem };
 }
 
-export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHostInput, probe: KeyProbe = probeHostKey): Promise<HostConfig> {
+interface Fields { name: string; group: string; host: string; port: number; username: string }
+
+function parseFields(input: AddHostInput): Fields {
   const name = text(input.name, "Name", 64);
   const group = text(input.group, "Group", 64, false);
   const host = text(input.host, "Host", 253);
   const username = text(input.username, "User", 64);
   if (!HOST_RE.test(host)) throw new HostAdminError(400, "invalid", "Host must be a name or IP address.");
   if (!USER_RE.test(username)) throw new HostAdminError(400, "invalid", "User is not valid.");
-  const portNum = input.port === undefined || input.port === "" ? 22 : Number(input.port);
-  if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) throw new HostAdminError(400, "invalid", "Port must be between 1 and 65535.");
-  if (cfg.hosts.some((h) => h.name.toLowerCase() === name.toLowerCase())) throw new HostAdminError(409, "duplicate", "A host with that name already exists.");
-  const { auth, pem } = resolveKey(cfg, input.key, input.allowNoPassphrase === true);
+  const port = input.port === undefined || input.port === "" ? 22 : Number(input.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new HostAdminError(400, "invalid", "Port must be between 1 and 65535.");
+  return { name, group, host, port, username };
+}
 
-  let fingerprint: string;
+async function pin(probe: KeyProbe, host: string, port: number): Promise<string> {
   try {
-    fingerprint = await probe(host, portNum);
+    return await probe(host, port);
   } catch (e) {
     throw new HostAdminError(422, "unreachable", probeMessage(e as Error));
   }
+}
+
+export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHostInput, probe: KeyProbe = probeHostKey): Promise<HostConfig> {
+  const { name, group, host, port, username } = parseFields(input);
+  if (cfg.hosts.some((h) => h.name.toLowerCase() === name.toLowerCase())) throw new HostAdminError(409, "duplicate", "A host with that name already exists.");
+  const { auth, pem } = resolveKey(cfg, input.key, input.allowNoPassphrase === true);
+  const fingerprint = await pin(probe, host, port);
 
   let id = slug(name);
   for (let n = 2; cfg.hosts.some((h) => h.id === id); n++) id = `${slug(name).slice(0, 58)}-${n}`;
@@ -231,7 +288,7 @@ export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHos
     name,
     ...(group ? { group } : {}),
     host,
-    port: portNum,
+    port,
     username,
     auth,
     hostKeyFingerprints: [fingerprint],
@@ -248,4 +305,59 @@ export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHos
   const loaded: HostConfig = { ...saved, files: true };
   cfg.hosts.push(loaded);
   return loaded;
+}
+
+export interface HostDetails {
+  id: string;
+  name: string;
+  group: string;
+  host: string;
+  port: number;
+  username: string;
+  auth: { type: "password" } | { type: "key"; keyId: string; keyName: string; encrypted: boolean };
+}
+
+function findHost(cfg: LoadedConfig, id: string): number {
+  const i = cfg.hosts.findIndex((h) => h.id === id);
+  if (i < 0) throw new HostAdminError(404, "not_found", "That host no longer exists.");
+  return i;
+}
+
+export function describeHost(cfg: LoadedConfig, id: string): HostDetails {
+  const h = cfg.hosts[findHost(cfg, id)];
+  const base = { id: h.id, name: h.name, group: h.group ?? "", host: h.host, port: h.port ?? 22, username: h.username };
+  if (h.auth.type !== "key") return { ...base, auth: { type: "password" } };
+  const pem = resolveSecret(h.auth.privateKey, cfg.baseDir, "privateKey", true)!;
+  return { ...base, auth: { type: "key", keyId: keyFingerprint(pem), keyName: keyNameOf(h), encrypted: keyIsEncrypted(pem) === true } };
+}
+
+export async function updateHost(cfg: LoadedConfig, store: HostStore, id: string, input: AddHostInput, probe: KeyProbe = probeHostKey): Promise<HostConfig> {
+  const idx = findHost(cfg, id);
+  const old = cfg.hosts[idx];
+  const { name, group, host, port, username } = parseFields(input);
+  if (cfg.hosts.some((h) => h.id !== id && h.name.toLowerCase() === name.toLowerCase())) throw new HostAdminError(409, "duplicate", "A host with that name already exists.");
+  const keep = !!input.key && typeof input.key === "object" && (input.key as { keep?: unknown }).keep === true;
+  const { auth, pem } = keep ? { auth: structuredClone(old.auth), pem: undefined } : resolveKey(cfg, input.key, input.allowNoPassphrase === true);
+  const moved = host !== old.host || port !== (old.port ?? 22);
+  const fingerprints = moved ? [await pin(probe, host, port)] : old.hostKeyFingerprints;
+
+  const { group: _g, ...rest } = old;
+  const candidate: HostConfig = { ...rest, ...(group ? { group } : {}), name, host, port, username, auth, hostKeyFingerprints: fingerprints };
+  try {
+    validateHost(structuredClone(candidate), cfg.baseDir, cfg.security, new Set(cfg.hosts.filter((h) => h.id !== id).map((h) => h.id)));
+  } catch (e) {
+    if (pem === undefined) throw new HostAdminError(422, "invalid", (e as Error).message);
+    throw new HostAdminError(400, "invalid_key", "That file is not a usable private key.");
+  }
+  const saved = store.update(id, candidate, pem);
+  const loaded: HostConfig = { ...saved, files: old.files ?? true };
+  cfg.hosts[cfg.hosts.findIndex((h) => h.id === id)] = loaded;
+  return loaded;
+}
+
+export function removeHost(cfg: LoadedConfig, store: HostStore, id: string): HostConfig {
+  const idx = findHost(cfg, id);
+  if (cfg.hosts.length <= 1) throw new HostAdminError(409, "last_host", "At least one host must remain.");
+  store.remove(id);
+  return cfg.hosts.splice(cfg.hosts.findIndex((h) => h.id === id), 1)[0];
 }
