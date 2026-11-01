@@ -613,6 +613,20 @@ async function initSetup(): Promise<void> {
       const targetPathEl = document.getElementById("target-path");
       if (targetPathEl) targetPathEl.textContent = targetConfigPath;
 
+      const sealBox = document.getElementById("seal-enable") as HTMLInputElement | null;
+      const sealFields = document.getElementById("seal-fields");
+      const sealPath = document.getElementById("seal-path");
+      if (sealPath && data.vaultPath) sealPath.textContent = data.vaultPath;
+      if (sealBox && !data.vaultWritable) {
+        sealBox.checked = false;
+        sealBox.disabled = true;
+        if (sealFields) sealFields.hidden = true;
+        const hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = `Encryption is unavailable because ${data.vaultPath || "the vault path"} cannot be written. Mount a writable folder there (see the README) to enable it.`;
+        sealBox.closest(".seal-opt")?.appendChild(hint);
+      }
+
       const notePath = document.getElementById("note-path");
       if (notePath) notePath.textContent = targetConfigPath;
 
