@@ -135,7 +135,7 @@ Shellport reads `config.json`. Start from [`config.example.json`](config.example
 | --- | --- |
 | `server` | Port, listen address, `publicUrl` (the origin used for OAuth redirects and WebSocket checks) and `trustProxy`. |
 | `github` | OAuth app `clientId` and `clientSecret`. |
-| `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. |
+| `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. Set `"admin": true` on a user to let them add hosts from the browser. |
 | `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints`, optional `allowedUsers`, and `files` (set it to `false` to turn off the file explorer for that host; it is on by default). |
 | `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, and `maxDownloadMB` (largest file the explorer will download, default 256). |
 | `session` | How long a sign-in lasts (`ttlHours`). |
@@ -147,6 +147,11 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 
 - **SSH key:** the private key stays on the server. If the key is passphrase-protected, the user types the passphrase in the terminal tab when connecting.
 - **Password:** stored on the server as an `env` or `file` secret. It is never sent to the browser.
+
+**Adding hosts from the browser.** A user with `"admin": true` sees an **Add host** button under the host list. The dialog takes a name, optional group, host or IP, port and user, and either an existing key or an uploaded private key. Shellport connects once to read the host's SSH key and pins it, so check that the address is the machine you mean. A key without a passphrase is only saved after the admin confirms a warning; passphrase-protected keys ask for the passphrase in the terminal each time. Every signed-in user sees the new host. Nobody is an admin unless you set the flag (the setup wizard marks the first user), and the server logs a notice at start when no user is. Where the host is saved depends on how the server runs:
+
+- **Sealed:** the host and an uploaded key go into the vault, which is re-encrypted in place. This needs the vault folder to be writable and the server to have been unsealed since the vault was last changed by `npm run vault -- edit` or `import`; otherwise adding fails and you should seal and unseal once.
+- **Plain `config.json`:** the host is appended to `config.json` and an uploaded key is written to `keys/<host id>.key` (mode 0600) next to it. The default Docker compose files mount both read-only, so adding fails there until you make them writable. Sealed mode avoids this.
 
 **Setup wizard.** If Shellport starts without a `config.json`, it opens a setup wizard instead of the app. The wizard can configure the server, GitHub OAuth, session limits and SSH hosts. It can also generate TOTP secrets with QR codes, check the config against the schema, and download `config.json`. You can force the wizard with `SHELLPORT_SETUP=1`.
 

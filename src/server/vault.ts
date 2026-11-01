@@ -157,34 +157,58 @@ export function readVaultHeader(file: string | Buffer): VaultHeader {
   return { magic, version, kdf };
 }
 
-export function sealVault(plaintext: string | Buffer, passphrase: string, params: ScryptParams = DEFAULT_PARAMS): string {
+export function sealVaultKeyed(plaintext: string | Buffer, passphrase: string, params: ScryptParams = DEFAULT_PARAMS): { file: string; dek: Buffer } {
   const weak = checkPassphraseStrength(passphrase);
   if (weak) throw new VaultError("weak_passphrase", weak);
   const header: VaultHeader = { magic: MAGIC, version: VERSION, kdf: newKdf(params) };
   const dek = crypto.randomBytes(KEY_LEN);
   const kek = deriveKey(passphrase, header.kdf);
   try {
-    return serialize({
+    const file = serialize({
       ...header,
       wrap: encrypt(kek, headerAad(header), dek),
       body: encrypt(dek, bodyAad, Buffer.from(plaintext)),
     });
+    return { file, dek: Buffer.from(dek) };
   } finally {
     kek.fill(0);
     dek.fill(0);
   }
 }
 
-export function openVault(file: string | Buffer, passphrase: string): Buffer {
+export function sealVault(plaintext: string | Buffer, passphrase: string, params: ScryptParams = DEFAULT_PARAMS): string {
+  const { file, dek } = sealVaultKeyed(plaintext, passphrase, params);
+  dek.fill(0);
+  return file;
+}
+
+export function openVaultKeyed(file: string | Buffer, passphrase: string): { plain: Buffer; dek: Buffer } {
   const vault = parseVault(file);
   const dek = unwrapKey(vault, passphrase);
-  try {
-    const plain = decrypt(dek, bodyAad, vault.body);
-    if (!plain) throw new VaultError("corrupt", "vault contents failed their integrity check");
-    return plain;
-  } finally {
+  const plain = decrypt(dek, bodyAad, vault.body);
+  if (!plain) {
     dek.fill(0);
+    throw new VaultError("corrupt", "vault contents failed their integrity check");
   }
+  return { plain, dek };
+}
+
+export function openVault(file: string | Buffer, passphrase: string): Buffer {
+  const { plain, dek } = openVaultKeyed(file, passphrase);
+  dek.fill(0);
+  return plain;
+}
+
+export function openVaultWithKey(file: string | Buffer, dek: Buffer): Buffer {
+  const plain = decrypt(dek, bodyAad, parseVault(file).body);
+  if (!plain) throw new VaultError("corrupt", "vault contents failed their integrity check");
+  return plain;
+}
+
+export function replaceVaultBody(file: string | Buffer, dek: Buffer, plaintext: string | Buffer): string {
+  const vault = parseVault(file);
+  if (!decrypt(dek, bodyAad, vault.body)) throw new VaultError("corrupt", "vault on disk does not match the unlocked vault");
+  return serialize({ ...vault, body: encrypt(dek, bodyAad, Buffer.from(plaintext)) });
 }
 
 export function changeVaultPassphrase(file: string | Buffer, oldPassphrase: string, newPassphrase: string, params: ScryptParams = DEFAULT_PARAMS): string {

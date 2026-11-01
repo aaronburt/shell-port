@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadSealedConfig, resolveSecret, type LoadedConfig } from "./config.js";
-import { checkPassphraseStrength, sealVault } from "./vault.js";
+import { checkPassphraseStrength, sealVaultKeyed } from "./vault.js";
 
 function isReference(node: unknown): node is { env: string } | { file: string } {
   if (!node || typeof node !== "object" || Array.isArray(node)) return false;
@@ -39,7 +39,7 @@ export function socketPathFor(vaultPath: string): string {
   return `${path.resolve(vaultPath)}.sock`;
 }
 
-export function migrateToVault(opts: { configPath: string; vaultPath: string; passphrase: string }): LoadedConfig {
+export function migrateToVaultKeyed(opts: { configPath: string; vaultPath: string; passphrase: string }): { cfg: LoadedConfig; dek: Buffer } {
   if (fs.existsSync(opts.vaultPath)) throw new Error(`${opts.vaultPath} already exists`);
   const weak = checkPassphraseStrength(opts.passphrase);
   if (weak) throw new Error(weak);
@@ -52,6 +52,13 @@ export function migrateToVault(opts: { configPath: string; vaultPath: string; pa
   } catch {
     throw new Error(`the folder ${dir} for the vault is not writable`);
   }
-  writeFileAtomic(path.resolve(opts.vaultPath), sealVault(json, opts.passphrase));
+  const { file, dek } = sealVaultKeyed(json, opts.passphrase);
+  writeFileAtomic(path.resolve(opts.vaultPath), file);
+  return { cfg, dek };
+}
+
+export function migrateToVault(opts: { configPath: string; vaultPath: string; passphrase: string }): LoadedConfig {
+  const { cfg, dek } = migrateToVaultKeyed(opts);
+  dek.fill(0);
   return cfg;
 }

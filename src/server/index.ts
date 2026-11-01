@@ -6,6 +6,7 @@ import { createSetupApp } from "./setup.js";
 import { createUnsealApp } from "./unseal.js";
 import { decideBoot } from "./boot.js";
 import { socketPathFor } from "./vaultops.js";
+import { fileStore, vaultStore, type HostStore } from "./hostadmin.js";
 import { createMigrateApp } from "./migrate.js";
 import crypto from "node:crypto";
 import { audit } from "./log.js";
@@ -15,23 +16,26 @@ const vaultPath = process.env.SHELLPORT_VAULT ?? "vault.sealed";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, "public");
 
-function startApp(cfg: LoadedConfig, vault?: string) {
+function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer) {
+  const hostStore: HostStore | undefined = vault ? (dek ? vaultStore(vault, dek) : undefined) : fileStore(configPath);
   const signals = ["SIGINT", "SIGTERM"] as const;
   const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
   let sealing = false;
   const { server, shutdown } = createApp(cfg, {
     publicDir,
+    hostStore,
     onSeal: vault
       ? () => {
           if (sealing) return;
           sealing = true;
           for (const sig of signals) process.off(sig, onSignal);
-          shutdown(5000, "seal").then(() => startSealed(vault, { port: cfg.server.port, host: cfg.server.host }));
+          shutdown(5000, "seal").then(() => { dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
         }
       : undefined,
   });
 
   server.listen(cfg.server.port, cfg.server.host, () => {
+    if (!cfg.users.some((u) => u.admin)) audit("server.notice", { message: "no user has admin: true; nobody can add hosts from the browser" });
     audit("server.start", { listen: `${cfg.server.host}:${cfg.server.port}`, publicUrl: cfg.server.publicUrl, hosts: cfg.hosts.length });
     if (cfg.security.allowUnpinnedHostKeys) audit("server.warning", { message: "allowUnpinnedHostKeys is on; do not use in production" });
     if (!cfg.server.publicUrl.startsWith("https://")) audit("server.warning", { message: "publicUrl is not https; cookies are not marked Secure" });
@@ -50,10 +54,10 @@ function startSetup() {
     vaultPath,
     publicDir,
     trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
-    onSaved: (savedCfg, savedVault) => {
+    onSaved: (savedCfg, savedVault, savedDek) => {
       if (appStarted) return;
       appStarted = true;
-      shutdown(1000, "setup.complete").then(() => startApp(savedCfg, savedVault));
+      shutdown(1000, "setup.complete").then(() => startApp(savedCfg, savedVault, savedDek));
     },
   });
 
@@ -82,11 +86,11 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
     socketPath: socketPathFor(file),
     publicDir,
     trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
-    onUnsealed: (plaintext) => {
+    onUnsealed: (plaintext, dek) => {
       const cfg = loadSealedConfig(plaintext);
       return () => {
         for (const sig of signals) process.off(sig, onSignal);
-        shutdown(1000, "unseal.complete").then(() => startApp(cfg, file));
+        shutdown(1000, "unseal.complete").then(() => startApp(cfg, file, dek));
       };
     },
   });
@@ -119,7 +123,7 @@ function startMigrate(cfg: LoadedConfig) {
     publicDir,
     token,
     trustProxy: process.env.SHELLPORT_TRUST_PROXY ? trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY) : cfg.server.trustProxy,
-    onMigrated: (sealed) => handOver(() => startApp(sealed, vaultPath)),
+    onMigrated: (sealed, dek) => handOver(() => startApp(sealed, vaultPath, dek)),
     onSkip: () => handOver(() => startApp(cfg)),
   });
 

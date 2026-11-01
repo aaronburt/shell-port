@@ -10,7 +10,7 @@
     "clientSecret": { "env": "SHELLPORT_GITHUB_SECRET" }
   },
   "users": [
-    { "github": 12345678, "totpSecret": { "env": "SHELLPORT_TOTP_USER" } }
+    { "github": 12345678, "totpSecret": { "env": "SHELLPORT_TOTP_USER" }, "admin": true }
   ],
   "session": { "ttlHours": 12 },
   "limits": {

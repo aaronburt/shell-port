@@ -4,9 +4,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { feedPassphrase } from "./passphrase.js";
 import { FilesPane } from "./files.js";
+import { initAddHost } from "./addhost.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean }
+interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -907,10 +908,23 @@ function renderMe(me: Me) {
   $("me-login").textContent = me.login;
   $("acct-title").textContent = me.login;
   $("acct-seal-sec").hidden = !me.sealable;
+  $("me-role").hidden = !me.admin;
+  $("add-host").hidden = !me.canAddHosts;
   setInterval(() => {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
 }
+
+initAddHost({
+  button: $("add-host"),
+  scrim: $("host-scrim"),
+  groups: () => [...new Set(hosts.map((h) => h.group))],
+  onAdded: async () => {
+    hosts = await api<Host[]>("/api/hosts");
+    renderHosts();
+  },
+  restoreFocus: () => $("add-host").focus(),
+});
 
 $("close-session").onclick = () => {
   if (active) closeTab(active);

@@ -4,7 +4,8 @@ import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { WebSocketServer } from "ws";
 import { parseCookie, stringifySetCookie } from "cookie";
-import { findUser, hostsForUser, type LoadedConfig } from "./config.js";
+import { findUser, hostsForUser, isAdmin, type LoadedConfig } from "./config.js";
+import { addHost, HostAdminError, listKeys, type HostStore, type KeyProbe } from "./hostadmin.js";
 import { verifyTotp } from "./totp.js";
 import { SessionStore, RateLimiter, type UserSession } from "./sessions.js";
 import { authorizeUrl, exchangeCode, type GitHubUser } from "./github.js";
@@ -30,6 +31,8 @@ export interface AppOptions {
   now?: () => number;
   timing?: TerminalTiming;
   onSeal?: () => void;
+  hostStore?: HostStore;
+  probeHostKey?: KeyProbe;
 }
 
 export function createApp(cfg: LoadedConfig, opts: AppOptions) {
@@ -43,6 +46,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const loginLimiter = new RateLimiter(cfg.limits.loginAttemptsPer15Min, 15 * 60_000);
   const apiLimiter = new RateLimiter(600, 60_000);
   const passphraseLimiter = new RateLimiter(10, 15 * 60_000);
+  const hostAddLimiter = new RateLimiter(20, 15 * 60_000);
   const activity = new ActivityLog();
   const terminals = new Map<number, Set<TerminalInfo>>();
   const terminalsBySession = new Map<string, Set<TerminalInfo>>();
@@ -110,6 +114,9 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   const requireSameOrigin = (req: Request, res: Response, next: NextFunction) =>
     req.headers.origin === cfg.server.publicUrl ? next() : res.status(403).json({ error: "bad_origin" });
+
+  const requireAdmin = (_req: Request, res: Response, next: NextFunction) =>
+    isAdmin(cfg, who(res.locals.session)) ? next() : res.status(403).json({ error: "forbidden" });
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
@@ -207,7 +214,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.get("/api/me", requireSession, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal });
+    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)) });
   });
 
   if (opts.onSeal) {
@@ -254,6 +261,29 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
         addr: `${h.username}@${h.host}${h.port !== 22 ? `:${h.port}` : ""}`,
       })),
     );
+  });
+
+  app.get("/api/keys", requireSession, requireAdmin, (_req, res) => {
+    res.json(listKeys(cfg));
+  });
+
+  app.post("/api/hosts", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), async (req, res) => {
+    const s: UserSession = res.locals.session;
+    if (!opts.hostStore) return res.status(409).json({ error: "storage_unavailable", message: "Hosts cannot be added from the browser on this server." });
+    if (!hostAddLimiter.hit(String(s.githubId))) return res.status(429).json({ error: "rate_limited" });
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const host = await addHost(cfg, opts.hostStore, body, opts.probeHostKey);
+      audit("host.add", {
+        ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
+        key: body.key && typeof body.key === "object" && "upload" in body.key ? "uploaded" : "existing", store: opts.hostStore.kind,
+      });
+      res.status(201).json({ id: host.id });
+    } catch (e) {
+      if (!(e instanceof HostAdminError)) throw e;
+      audit("host.add_failed", { ip: ipOf(req), user: s.login, githubId: s.githubId, error: e.code });
+      res.status(e.status).json({ error: e.code, message: e.message });
+    }
   });
 
   const MAX_DOWNLOADS_PER_TERMINAL = 2;
