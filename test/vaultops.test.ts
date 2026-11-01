@@ -46,6 +46,23 @@ test("a plain config converts into a sealed config that loads", () => {
   assert.equal(loadSealedConfig(json).hosts[0].id, "h");
 });
 
+test("migration promotes the first user to admin only when nobody is one yet", () => {
+  const secret = base32Encode(Buffer.alloc(20, 3));
+  const make = (name: string, users: unknown[]) => {
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, JSON.stringify({
+      server: { publicUrl: "https://ssh.example.com" },
+      github: { clientId: "id", clientSecret: "s" },
+      users,
+      hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: "p" }, hostKeyFingerprints: ["SHA256:a"] }],
+    }));
+    return loadSealedConfig(plainConfigToSealedJson(f)).users.map((u) => u.admin);
+  };
+  assert.deepEqual(make("one.json", [{ github: 1, totpSecret: secret }]), [true]);
+  assert.deepEqual(make("many.json", [{ github: 1, totpSecret: secret }, { github: 2, totpSecret: secret }]), [true, false]);
+  assert.deepEqual(make("has.json", [{ github: 1, totpSecret: secret }, { github: 2, totpSecret: secret, admin: true }]), [false, true]);
+});
+
 test("atomic writes replace the file with owner-only permissions", () => {
   const f = path.join(dir, "out.txt");
   writeFileAtomic(f, "one");

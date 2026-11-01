@@ -663,7 +663,8 @@ test("UI: the sidebar footer is pinned to the bottom and shows only the avatar a
   const box = await foot.boundingBox();
   assert.ok(rail && box && Math.abs(rail.y + rail.height - (box.y + box.height)) < 2, "the footer touches the bottom of the sidebar");
   assert.match(flatten(await foot.innerText()), /^(UI )?ui-user$/);
-  assert.equal(await foot.locator("svg, button:not(#account-btn)").count(), 0);
+  assert.equal(await foot.locator("svg, button:not(#account-btn):visible").count(), 0);
+  assert.equal(await foot.locator("#add-host").isHidden(), true);
   assert.equal(await foot.locator("#account-btn #me-avatar").count(), 1);
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "dialog");
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-label"), "Account menu");

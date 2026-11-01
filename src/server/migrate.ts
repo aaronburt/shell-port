@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { LoadedConfig } from "./config.js";
 import { checkPassphraseStrength } from "./vault.js";
-import { migrateToVault } from "./vaultops.js";
+import { migrateToVaultKeyed } from "./vaultops.js";
 import { UnsealLockout } from "./unseal.js";
 import { audit } from "./log.js";
 
@@ -20,7 +20,7 @@ export interface MigrateOptions {
   token: string;
   trustProxy?: boolean | number;
   lockout?: UnsealLockout;
-  onMigrated: (cfg: LoadedConfig) => void;
+  onMigrated: (cfg: LoadedConfig, dek: Buffer) => void;
   onSkip: () => void;
 }
 
@@ -101,15 +101,16 @@ export function createMigrateApp(opts: MigrateOptions) {
     const weak = checkPassphraseStrength(passphrase);
     if (weak) return res.status(400).json({ error: "weak_passphrase", message: weak });
     let cfg: LoadedConfig;
+    let dek: Buffer;
     try {
-      cfg = migrateToVault({ configPath: opts.configPath, vaultPath: opts.vaultPath, passphrase });
+      ({ cfg, dek } = migrateToVaultKeyed({ configPath: opts.configPath, vaultPath: opts.vaultPath, passphrase }));
     } catch (e) {
       audit("migrate.failed", { error: (e as Error).message });
       return res.status(422).json({ error: "migrate_failed", message: (e as Error).message });
     }
     lockout.succeed();
     audit("migrate.ok", { vault: opts.vaultPath });
-    res.on("finish", () => setImmediate(() => opts.onMigrated(cfg)));
+    res.on("finish", () => setImmediate(() => opts.onMigrated(cfg, dek)));
     res.status(204).end();
   });
 

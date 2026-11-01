@@ -2,7 +2,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { openVault, VaultError } from "./vault.js";
+import { openVaultKeyed, VaultError } from "./vault.js";
 import { audit } from "./log.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
@@ -50,7 +50,7 @@ export interface UnsealOptions {
   trustProxy?: boolean | number;
   socketPath?: string;
   lockout?: UnsealLockout;
-  onUnsealed: (plaintext: Buffer) => () => void;
+  onUnsealed: (plaintext: Buffer, dek: Buffer) => () => void;
 }
 
 export function createUnsealApp(opts: UnsealOptions) {
@@ -117,8 +117,9 @@ export function createUnsealApp(opts: UnsealOptions) {
     }
 
     let plain: Buffer;
+    let dek: Buffer;
     try {
-      plain = openVault(fs.readFileSync(opts.vaultPath), passphrase);
+      ({ plain, dek } = openVaultKeyed(fs.readFileSync(opts.vaultPath), passphrase));
     } catch (e) {
       if (e instanceof VaultError && e.code === "bad_passphrase") {
         if (!local) lockout.fail();
@@ -133,8 +134,9 @@ export function createUnsealApp(opts: UnsealOptions) {
 
     let start: () => void;
     try {
-      start = opts.onUnsealed(plain);
+      start = opts.onUnsealed(plain, dek);
     } catch (e) {
+      dek.fill(0);
       audit("unseal.config_invalid", { ip, error: (e as Error).message });
       return res.status(422).json({ error: "config_invalid", message: (e as Error).message });
     } finally {

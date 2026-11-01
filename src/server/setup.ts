@@ -5,7 +5,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import QRCode from "qrcode";
 import { newSecret, otpauthUri, base32Decode } from "./totp.js";
 import { loadConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
-import { checkPassphraseStrength, sealVault } from "./vault.js";
+import { checkPassphraseStrength, sealVaultKeyed } from "./vault.js";
 import { inlineSecrets, writeFileAtomic } from "./vaultops.js";
 import { audit } from "./log.js";
 
@@ -129,7 +129,7 @@ export interface SetupAppOptions {
   publicDir: string;
   vaultPath?: string;
   trustProxy?: boolean | number;
-  onSaved?: (cfg: LoadedConfig, vaultPath?: string) => void;
+  onSaved?: (cfg: LoadedConfig, vaultPath?: string, dek?: Buffer) => void;
 }
 
 export function createSetupApp(opts: SetupAppOptions) {
@@ -219,16 +219,19 @@ export function createSetupApp(opts: SetupAppOptions) {
       } catch (e) {
         return res.status(400).json({ ok: false, error: (e as Error).message });
       }
+      let dek: Buffer;
       try {
         const dir = path.dirname(path.resolve(opts.vaultPath));
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        writeFileAtomic(path.resolve(opts.vaultPath), sealVault(json, passphrase));
+        const keyed = sealVaultKeyed(json, passphrase);
+        dek = keyed.dek;
+        writeFileAtomic(path.resolve(opts.vaultPath), keyed.file);
       } catch (e) {
         return res.status(403).json({ ok: false, readOnly: true, error: `Cannot write to ${opts.vaultPath}: ${(e as Error).message}` });
       }
       audit("setup.sealed", { path: opts.vaultPath });
       res.json({ ok: true, saved: true, sealed: true, canTransition: Boolean(opts.onSaved) });
-      if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath), 500);
+      if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath, dek), 500);
       return;
     }
 

@@ -9,6 +9,7 @@ export interface HostAuthKey {
   type: "key";
   privateKey: SecretRef;
   passphrase?: SecretRef | false;
+  keyName?: string;
 }
 export interface HostAuthPassword {
   type: "password";
@@ -59,11 +60,13 @@ export interface AppConfig {
 export interface UserConfig {
   github: string | number;
   totpSecret: SecretRef;
+  admin?: boolean;
 }
 
 export interface LoadedUser {
   match: string;
   totpKey: Buffer;
+  admin: boolean;
 }
 
 export interface LoadedConfig extends Omit<AppConfig, "users"> {
@@ -164,6 +167,37 @@ export function loadSealedConfig(plaintext: Buffer | string, baseDir = process.c
   return validateConfig(raw, baseDir);
 }
 
+export function validateHost(h: HostConfig, baseDir: string, security: { allowUnpinnedHostKeys: boolean }, seen: Set<string>) {
+  if (!ID_RE.test(h.id ?? "")) fail(`host id ${JSON.stringify(h.id)} must be 1-64 chars of letters, digits, _ . -`);
+  if (seen.has(h.id)) fail(`duplicate host id ${h.id}`);
+  seen.add(h.id);
+  if (!h.host || !h.username) fail(`host ${h.id}: host and username are required`);
+  h.name ||= h.id;
+  if (h.files !== undefined && typeof h.files !== "boolean") fail(`host ${h.id}: files must be true or false`);
+  h.files ??= true;
+  h.port = intOption(h.port, `host ${h.id} port`, 22, 1, 65535);
+  if (!h.auth || !["key", "password"].includes(h.auth.type)) fail(`host ${h.id}: auth.type must be key or password`);
+  if (h.allowedUsers) h.allowedUsers = normalizeUsers(h.allowedUsers, `host ${h.id} allowedUsers`);
+  if (!h.hostKeyFingerprints?.length && !security.allowUnpinnedHostKeys)
+    fail(`host ${h.id}: hostKeyFingerprints is required (or set security.allowUnpinnedHostKeys for development)`);
+  if (h.auth.type === "key") {
+    const pem = resolveSecret(h.auth.privateKey, baseDir, `host ${h.id} privateKey`, true)!;
+    const encrypted = keyIsEncrypted(pem);
+    if (encrypted === undefined) fail(`host ${h.id}: privateKey is not a readable private key`);
+    if (h.auth.passphrase === undefined && !encrypted)
+      fail(`host ${h.id}: privateKey has no passphrase. Protect it (ssh-keygen -p -f <key>) so users unlock it in the browser, or set "passphrase": false to allow an unencrypted key`);
+    if (h.auth.passphrase === false && encrypted)
+      fail(`host ${h.id}: privateKey is passphrase-protected but "passphrase": false was set`);
+    if (h.auth.passphrase !== undefined && h.auth.passphrase !== false) {
+      const passphrase = resolveSecret(h.auth.passphrase, baseDir, `host ${h.id} passphrase`)!;
+      const parsed = ssh2.utils.parseKey(pem, passphrase);
+      if (parsed instanceof Error || (Array.isArray(parsed) && parsed[0] instanceof Error))
+        fail(`host ${h.id}: the configured passphrase does not unlock privateKey`);
+    }
+  }
+  if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
+}
+
 export function validateConfig(raw: any, baseDir: string): LoadedConfig {
   const server = raw.server ?? {};
   const publicUrl = String(server.publicUrl ?? "").replace(/\/+$/, "");
@@ -182,42 +216,14 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
     let totpKey: Buffer | undefined;
     try { totpKey = base32Decode(secret); } catch { fail(`users[${i}] totpSecret is not valid base32`); }
     if (totpKey.length < 16) fail(`users[${i}] totpSecret is too short (need at least 128 bits; use npm run totp)`);
-    return { match, totpKey };
+    if (u.admin !== undefined && typeof u.admin !== "boolean") fail(`users[${i}] (${match}) admin must be true or false`);
+    return { match, totpKey, admin: u.admin === true };
   });
 
   const hosts: HostConfig[] = raw.hosts ?? [];
   if (!Array.isArray(hosts) || !hosts.length) fail("hosts must be a non-empty array");
   const seen = new Set<string>();
-  for (const h of hosts) {
-    if (!ID_RE.test(h.id ?? "")) fail(`host id ${JSON.stringify(h.id)} must be 1-64 chars of letters, digits, _ . -`);
-    if (seen.has(h.id)) fail(`duplicate host id ${h.id}`);
-    seen.add(h.id);
-    if (!h.host || !h.username) fail(`host ${h.id}: host and username are required`);
-    h.name ||= h.id;
-    if (h.files !== undefined && typeof h.files !== "boolean") fail(`host ${h.id}: files must be true or false`);
-    h.files ??= true;
-    h.port = intOption(h.port, `host ${h.id} port`, 22, 1, 65535);
-    if (!h.auth || !["key", "password"].includes(h.auth.type)) fail(`host ${h.id}: auth.type must be key or password`);
-    if (h.allowedUsers) h.allowedUsers = normalizeUsers(h.allowedUsers, `host ${h.id} allowedUsers`);
-    if (!h.hostKeyFingerprints?.length && !security.allowUnpinnedHostKeys)
-      fail(`host ${h.id}: hostKeyFingerprints is required (or set security.allowUnpinnedHostKeys for development)`);
-    if (h.auth.type === "key") {
-      const pem = resolveSecret(h.auth.privateKey, baseDir, `host ${h.id} privateKey`, true)!;
-      const encrypted = keyIsEncrypted(pem);
-      if (encrypted === undefined) fail(`host ${h.id}: privateKey is not a readable private key`);
-      if (h.auth.passphrase === undefined && !encrypted)
-        fail(`host ${h.id}: privateKey has no passphrase. Protect it (ssh-keygen -p -f <key>) so users unlock it in the browser, or set "passphrase": false to allow an unencrypted key`);
-      if (h.auth.passphrase === false && encrypted)
-        fail(`host ${h.id}: privateKey is passphrase-protected but "passphrase": false was set`);
-      if (h.auth.passphrase !== undefined && h.auth.passphrase !== false) {
-        const passphrase = resolveSecret(h.auth.passphrase, baseDir, `host ${h.id} passphrase`)!;
-        const parsed = ssh2.utils.parseKey(pem, passphrase);
-        if (parsed instanceof Error || (Array.isArray(parsed) && parsed[0] instanceof Error))
-          fail(`host ${h.id}: the configured passphrase does not unlock privateKey`);
-      }
-    }
-    if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
-  }
+  for (const h of hosts) validateHost(h, baseDir, security, seen);
 
   return {
     baseDir,
@@ -264,6 +270,10 @@ export function userAllowed(list: Array<string | number>, who: Identity): boolea
     const s = String(e);
     return /^\d+$/.test(s) ? s === id : s === login;
   });
+}
+
+export function isAdmin(cfg: Pick<LoadedConfig, "users">, who: Identity): boolean {
+  return cfg.users.some((u) => u.admin && userAllowed([u.match], who));
 }
 
 export function findUser(cfg: LoadedConfig, who: Identity): LoadedUser | undefined {

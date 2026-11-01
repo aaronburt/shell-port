@@ -371,11 +371,11 @@ function buildConfigObject(): any {
   const ghSecretLit = (document.getElementById("gh-secret-lit") as HTMLInputElement)?.value || "";
   const githubSecret = ghSecretType === "literal" ? ghSecretLit : { env: ghSecretEnv };
 
-  const users = usersState.map((u) => {
+  const users = usersState.map((u, i) => {
     const rawGh = u.github.trim();
     const github = /^\d+$/.test(rawGh) ? Number(rawGh) : rawGh;
     const totpSecret = u.secretType === "literal" ? u.secretValue.trim() : { env: u.secretValue.trim() };
-    return { github, totpSecret };
+    return i === 0 ? { github, totpSecret, admin: true } : { github, totpSecret };
   });
 
   const hosts = hostsState.map((h) => {

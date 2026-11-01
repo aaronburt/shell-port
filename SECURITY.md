@@ -13,6 +13,7 @@ Please report vulnerabilities privately with GitHub private vulnerability report
 Shellport gives a signed-in browser a shell on pre-configured hosts, so a compromise of the service is a compromise of those hosts. The design assumes:
 
 - **Trusted:** the server operator, the machine running Shellport, and the contents of `config.json`, `.env` and `keys/`.
+- **Administrators:** users with `"admin": true` can add hosts and upload SSH keys from the browser, so an admin account is as powerful as the server operator for choosing where Shellport connects. Keep the flag to as few people as possible. Adding a host makes the server open one connection to the address given (to read and pin its host key), so an admin can use it to probe addresses the server can reach. Each add is rate limited, needs the same `Origin`, and is written to the audit log with the user, target and whether a key was uploaded, never the key.
 - **Authenticated, partly trusted:** users listed in `config.json`. They pass GitHub sign-in and a TOTP code, and can reach only the hosts they are allowed. They can run anything the configured SSH account can run.
 - **Untrusted:** everyone else on the network, other websites open in a user's browser, and the content of the remote hosts' output.
 
@@ -50,7 +51,7 @@ An optional vault (`vault.sealed`) replaces `config.json` and `.env`. See the RE
 - **Sealed server surface.** While sealed it serves only the unseal page, its static assets, `/healthz` and `POST /api/unseal`. Unsealing needs a same-origin request over HTTPS (or from loopback), accepts a body of at most 2 KB, and has a global lockout after repeated failures. Successful and failed attempts are audit-logged.
 - **Migration page.** When a plain `config.json` exists and no vault does, the server serves only a migration page until someone enters the one-time code from its log (compared in constant time, with a lockout on repeated wrong codes). Without log access the page cannot be used to set a passphrase. It accepts the passphrase over HTTPS or when the request is addressed to localhost.
 - **Local unseal socket.** A sealed server also listens on `<vault>.sock` with mode 0600. Anyone who can open it can try passphrases without the web lockout, so protect the directory like the vault itself.
-- **The passphrase** is used once to derive a key, then dropped; derived keys and decrypted buffers are zeroed after use where Node allows. It is sent to the server in the unseal request, so the server operator and the TLS endpoint are trusted with it.
+- **The passphrase** is used once to derive a key, then dropped; derived keys and decrypted buffers are zeroed after use where Node allows. The one exception is the vault's data key, which an unsealed server keeps in memory so admins can add hosts and keys without being asked for the passphrase again. It is zeroed when the server is sealed. It is sent to the server in the unseal request, so the server operator and the TLS endpoint are trusted with it.
 - **Plain-text leftovers.** `export` and the editor's temporary file contain secrets in plain text. The temporary file is mode 0600, placed in `/dev/shm` when available, and overwritten and removed afterwards.
 
 Do not commit `.env`, `config.json`, `keys/` or any private key. The repository's `.gitignore` excludes them.
