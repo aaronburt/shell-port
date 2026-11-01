@@ -5,6 +5,7 @@ import { createApp } from "./app.js";
 import { createSetupApp } from "./setup.js";
 import { createUnsealApp } from "./unseal.js";
 import { decideBoot } from "./boot.js";
+import { socketPathFor } from "./vaultops.js";
 import { audit } from "./log.js";
 
 const configPath = process.env.SHELLPORT_CONFIG ?? "config.json";
@@ -72,8 +73,9 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
   const host = listen?.host ?? (process.env.HOST || "0.0.0.0");
   const signals = ["SIGINT", "SIGTERM"] as const;
   const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
-  const { server, shutdown } = createUnsealApp({
+  const { server, shutdown, listenSocket } = createUnsealApp({
     vaultPath: file,
+    socketPath: socketPathFor(file),
     publicDir,
     trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
     onUnsealed: (plaintext) => {
@@ -88,6 +90,7 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
   server.listen(port, host, () => {
     audit("server.sealed", { listen: `${host}:${port}`, vault: file });
     console.log(`Shellport is sealed. Open http://${host === "0.0.0.0" ? "localhost" : host}:${port} to unseal it.`);
+    listenSocket();
   });
 
   for (const sig of signals) process.on(sig, onSignal);

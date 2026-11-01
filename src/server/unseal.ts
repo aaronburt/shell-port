@@ -48,6 +48,7 @@ export interface UnsealOptions {
   vaultPath: string;
   publicDir: string;
   trustProxy?: boolean | number;
+  socketPath?: string;
   lockout?: UnsealLockout;
   onUnsealed: (plaintext: Buffer) => () => void;
 }
@@ -84,8 +85,10 @@ export function createUnsealApp(opts: UnsealOptions) {
     next();
   });
 
+  const viaSocket = (req: Request) => (req as Request & { viaSocket?: boolean }).viaSocket === true;
+
   const requireSecure = (req: Request, res: Response, next: NextFunction) =>
-    req.secure || LOOPBACK.has(req.ip ?? "") ? next() : res.status(403).json({ error: "https_required" });
+    viaSocket(req) || req.secure || LOOPBACK.has(req.ip ?? "") ? next() : res.status(403).json({ error: "https_required" });
 
   const requireSameOrigin = (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -100,7 +103,8 @@ export function createUnsealApp(opts: UnsealOptions) {
 
   app.post("/api/unseal", requireSecure, requireSameOrigin, express.json({ limit: "2kb" }), (req, res) => {
     const ip = req.ip ?? "";
-    const wait = lockout.retryAfterMs();
+    const local = viaSocket(req);
+    const wait = local ? 0 : lockout.retryAfterMs();
     if (wait > 0) {
       const seconds = Math.ceil(wait / 1000);
       res.setHeader("Retry-After", String(seconds));
@@ -117,7 +121,7 @@ export function createUnsealApp(opts: UnsealOptions) {
       plain = openVault(fs.readFileSync(opts.vaultPath), passphrase);
     } catch (e) {
       if (e instanceof VaultError && e.code === "bad_passphrase") {
-        lockout.fail();
+        if (!local) lockout.fail();
         const seconds = Math.ceil(lockout.retryAfterMs() / 1000);
         audit("unseal.failed", { ip, lockedSeconds: seconds || undefined });
         if (seconds) res.setHeader("Retry-After", String(seconds));
@@ -138,7 +142,7 @@ export function createUnsealApp(opts: UnsealOptions) {
     }
 
     lockout.succeed();
-    audit("unseal.ok", { ip });
+    audit("unseal.ok", { ip: local ? "local-socket" : ip });
     res.on("finish", () => setImmediate(start));
     res.status(204).end();
   });
@@ -159,6 +163,24 @@ export function createUnsealApp(opts: UnsealOptions) {
 
   const server = http.createServer(app);
 
+  const socketServer = opts.socketPath
+    ? http.createServer((req, res) => {
+        (req as http.IncomingMessage & { viaSocket?: boolean }).viaSocket = true;
+        app(req, res);
+      })
+    : undefined;
+
+  const listenSocket = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (!socketServer || !opts.socketPath) return resolve();
+      try { fs.rmSync(opts.socketPath, { force: true }); } catch {}
+      socketServer.once("error", () => resolve());
+      socketServer.listen(opts.socketPath, () => {
+        try { fs.chmodSync(opts.socketPath!, 0o600); } catch {}
+        resolve();
+      });
+    });
+
   let stopping: Promise<void> | undefined;
   const shutdown = (deadlineMs = 5000, reason = "shutdown"): Promise<void> =>
     (stopping ??= new Promise<void>((resolve) => {
@@ -173,7 +195,12 @@ export function createUnsealApp(opts: UnsealOptions) {
       }, deadlineMs);
       server.close(() => done());
       server.closeIdleConnections();
+      if (socketServer) {
+        socketServer.close();
+        socketServer.closeAllConnections();
+        try { fs.rmSync(opts.socketPath!, { force: true }); } catch {}
+      }
     }));
 
-  return { app, server, shutdown, lockout };
+  return { app, server, shutdown, lockout, listenSocket };
 }
