@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
+import { loadConfig, loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createSetupApp } from "./setup.js";
 import { createUnsealApp } from "./unseal.js";
@@ -88,7 +88,9 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
     trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
     onUnsealed: (plaintext, dek) => {
       const cfg = loadSealedConfig(plaintext);
+      const promoted = promoteFirstAdmin(cfg);
       return () => {
+        if (promoted) audit("server.notice", { message: `the vault has no admin, so ${promoted} (the first user) is treated as admin` });
         for (const sig of signals) process.off(sig, onSignal);
         shutdown(1000, "unseal.complete").then(() => startApp(cfg, file, dek));
       };
