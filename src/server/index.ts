@@ -118,7 +118,7 @@ function startMigrate(cfg: LoadedConfig) {
     vaultPath,
     publicDir,
     token,
-    trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
+    trustProxy: process.env.SHELLPORT_TRUST_PROXY ? trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY) : cfg.server.trustProxy,
     onMigrated: (sealed) => handOver(() => startApp(sealed, vaultPath)),
     onSkip: () => handOver(() => startApp(cfg)),
   });

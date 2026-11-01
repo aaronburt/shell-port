@@ -245,3 +245,42 @@ test("migration mode locks out repeated wrong codes", async () => {
     await shutdown(500, "test");
   }
 });
+
+test("migration mode accepts a passphrase from a trusted proxy that reports HTTPS, and refuses one that reports HTTP", async () => {
+  const sub = fs.mkdtempSync(path.join(dir, "mig-proxy-"));
+  fs.mkdirSync(path.join(sub, "v"));
+  const configPath = path.join(sub, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    server: { publicUrl: "https://ssh.example.com" },
+    github: { clientId: "id", clientSecret: "secret" },
+    users: [{ github: 1, totpSecret: base32Encode(Buffer.alloc(20, 2)) }],
+    hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: "pw" }, hostKeyFingerprints: ["SHA256:a"] }],
+  }));
+  const { server, shutdown } = createMigrateApp({
+    configPath,
+    vaultPath: path.join(sub, "v", "vault.sealed"),
+    publicDir: sub,
+    token: "tok",
+    trustProxy: 1,
+    onMigrated: () => {},
+    onSkip: () => {},
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const post = (headers: Record<string, string>) =>
+    new Promise<number>((resolve, reject) => {
+      const body = JSON.stringify({ token: "tok", passphrase: PASS });
+      const req = http.request(
+        { host: "127.0.0.1", port, method: "POST", path: "/api/migrate", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), Host: "ssh.example.com", Origin: "https://ssh.example.com", "X-Forwarded-For": "203.0.113.5", ...headers } },
+        (res) => { res.resume(); res.on("end", () => resolve(res.statusCode ?? 0)); },
+      );
+      req.on("error", reject);
+      req.end(body);
+    });
+  try {
+    assert.equal(await post({ "X-Forwarded-Proto": "http" }), 403);
+    assert.equal(await post({ "X-Forwarded-Proto": "https" }), 204);
+  } finally {
+    await shutdown(500, "test");
+  }
+});

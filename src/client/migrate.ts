@@ -14,7 +14,10 @@ const lock = (on: boolean) => { for (const el of [code, pass, pass2, go, skip]) 
 fetch("/api/migrate/status").then((r) => r.json()).then((s) => {
   $("cfg-path").textContent = s.configPath;
   if (!s.writable) {
-    show(`The folder for ${s.vaultPath} is not writable, so the vault cannot be created. Mount a writable folder there, or continue without encrypting.`);
+    const dir = String(s.vaultPath).replace(/\/[^/]*$/, "") || "/";
+    show(s.reason === "missing"
+      ? `The passphrase boxes are locked because ${dir} does not exist in the container, so there is nowhere to save the vault. Add "SHELLPORT_VAULT: /vault/vault.sealed" under environment and "- ./vault:/vault" under volumes in docker-compose.yml, run mkdir vault, then docker compose up -d.`
+      : `The passphrase boxes are locked because ${dir} is not writable by the Shellport user, so the vault cannot be saved there. Make the mounted vault folder writable (on Linux, chown it to user 1000), then restart.`);
     for (const el of [pass, pass2, go]) el.disabled = true;
   }
 }).catch(() => {});
@@ -54,7 +57,9 @@ async function send(path: string, payload: Record<string, string>, label: HTMLBu
     if (j.error === "bad_token") show("That migration code is not right. Copy it from the server log.");
     else if (j.error === "locked") show(`Too many wrong codes. Try again in ${j.retryAfter} seconds.`);
     else if (j.error === "weak_passphrase" || j.error === "migrate_failed") show(j.message);
-    else if (j.error === "https_required") show("Setting a passphrase needs HTTPS, or opening this page on localhost.");
+    else if (j.error === "https_required") show(location.protocol === "https:"
+      ? "You are on HTTPS, but the server does not see the connection as HTTPS. Set server.trustProxy in config.json (or SHELLPORT_TRUST_PROXY=1) so it trusts your reverse proxy's X-Forwarded-Proto header, then restart."
+      : "Setting a passphrase needs HTTPS, or opening this page on localhost.");
     else if (j.error === "bad_origin") show("Request blocked. Open this page at the address you normally use for Shellport.");
     else show("Something went wrong. Check the server log.");
   } catch {
