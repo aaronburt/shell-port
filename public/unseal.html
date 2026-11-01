@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Unseal · Shellport</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/unseal.css">
+</head>
+<body>
+<main class="gate">
+  <div class="gate-col">
+    <span class="logo big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+    <h1>Unseal Shellport</h1>
+    <p class="gate-error" id="error" role="alert" hidden></p>
+    <form class="gate-box" id="form" autocomplete="off">
+      <label class="field" for="pass">This server is <b>sealed</b>. Enter the unseal passphrase to decrypt its configuration and keys into memory.</label>
+      <input id="pass" name="passphrase" type="password" autocomplete="off" spellcheck="false" placeholder="Passphrase" autofocus required>
+      <button class="btn" type="submit" id="go">Unseal</button>
+    </form>
+    <p class="gate-note">The passphrase is used once to unlock the vault and is not stored. After unsealing you sign in with GitHub and your authenticator code as usual.</p>
+    <span class="seal-state"><span class="dot"></span>sealed · sign-in disabled</span>
+  </div>
+</main>
+<script src="/assets/unseal.js"></script>
+</body>
+</html>

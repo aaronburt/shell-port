@@ -133,6 +133,37 @@ export function loadConfig(file: string): LoadedConfig {
   return validateConfig(raw, baseDir);
 }
 
+function findReference(node: unknown, where: string): string | undefined {
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const hit = findReference(node[i], `${where}[${i}]`);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  if (node && typeof node === "object") {
+    const keys = Object.keys(node);
+    if (keys.length === 1 && (keys[0] === "env" || keys[0] === "file") && typeof (node as Record<string, unknown>)[keys[0]] === "string") return where;
+    for (const k of keys) {
+      const hit = findReference((node as Record<string, unknown>)[k], where ? `${where}.${k}` : k);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+export function loadSealedConfig(plaintext: Buffer | string, baseDir = process.cwd()): LoadedConfig {
+  let raw: any;
+  try {
+    raw = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    fail("the vault does not contain valid JSON");
+  }
+  const ref = findReference(raw, "");
+  if (ref) fail(`${ref}: a sealed config cannot use env or file references; put the value in the vault itself`);
+  return validateConfig(raw, baseDir);
+}
+
 export function validateConfig(raw: any, baseDir: string): LoadedConfig {
   const server = raw.server ?? {};
   const publicUrl = String(server.publicUrl ?? "").replace(/\/+$/, "");
