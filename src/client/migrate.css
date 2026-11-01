@@ -1,0 +1,5 @@
+@import "./login.css";
+.gate-box input[type="password"], .gate-box input[type="text"] { font: 500 16px var(--f-ui); letter-spacing: normal; text-align: left; }
+.logo.big svg { width: 24px; height: 24px; }
+.btn:disabled { opacity: .6; cursor: default; }
+.btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); }

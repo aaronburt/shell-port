@@ -151,6 +151,7 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             -p 127.0.0.1:8080:8080 \
+            -e SHELLPORT_MIGRATE=off \
             -v "$TMP_DIR/config.json:/config/config.json:ro" \
             shellport:ci
 
