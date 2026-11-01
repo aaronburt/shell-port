@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { loadConfig, loadSealedConfig, type LoadedConfig } from "../src/server/config.js";
+import { loadConfig, loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "../src/server/config.js";
 import crypto from "node:crypto";
 import ssh2 from "ssh2";
 import { addHost, fileStore, listKeys, probeHostKey, vaultStore, HostAdminError } from "../src/server/hostadmin.js";
@@ -51,6 +51,15 @@ test("users can be flagged admin and the flag is validated", () => {
   const { cfg } = plainSetup();
   assert.deepEqual(cfg.users.map((u) => u.admin), [true, false]);
   assert.throws(() => loadSealedConfig(JSON.stringify(rawConfig({ users: [{ github: "a", totpSecret: base32Encode(TOTP_KEY), admin: "yes" }] }))), /admin must be true or false/);
+});
+
+test("a sealed config with no admin treats the first user as admin, and one with an admin is left alone", () => {
+  const none = loadSealedConfig(JSON.stringify(rawConfig({ users: [{ github: "a", totpSecret: base32Encode(TOTP_KEY) }, { github: "b", totpSecret: base32Encode(TOTP_KEY) }] })));
+  assert.equal(promoteFirstAdmin(none), "a");
+  assert.deepEqual(none.users.map((u) => u.admin), [true, false]);
+  const some = loadSealedConfig(JSON.stringify(rawConfig({ users: [{ github: "a", totpSecret: base32Encode(TOTP_KEY) }, { github: "b", totpSecret: base32Encode(TOTP_KEY), admin: true }] })));
+  assert.equal(promoteFirstAdmin(some), undefined);
+  assert.deepEqual(some.users.map((u) => u.admin), [false, true]);
 });
 
 test("adding a host with an uploaded key writes the key file and pins the host key", async () => {

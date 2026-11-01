@@ -276,6 +276,12 @@ export function isAdmin(cfg: Pick<LoadedConfig, "users">, who: Identity): boolea
   return cfg.users.some((u) => u.admin && userAllowed([u.match], who));
 }
 
+export function promoteFirstAdmin(cfg: Pick<LoadedConfig, "users">): string | undefined {
+  if (!cfg.users.length || cfg.users.some((u) => u.admin)) return undefined;
+  cfg.users[0].admin = true;
+  return cfg.users[0].match;
+}
+
 export function findUser(cfg: LoadedConfig, who: Identity): LoadedUser | undefined {
   return cfg.users.find((u) => userAllowed([u.match], who));
 }
