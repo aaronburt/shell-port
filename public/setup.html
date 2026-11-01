@@ -140,6 +140,14 @@
       <div class="code-preview-wrap">
         <pre><code id="json-preview"></code></pre>
       </div>
+      <div class="seal-opt">
+        <label><input type="checkbox" id="seal-enable"> Encrypt the configuration with a passphrase (seal it)</label>
+        <div id="seal-fields" hidden>
+          <input type="password" id="seal-pass" autocomplete="new-password" placeholder="Passphrase (12+ characters)" aria-label="Passphrase">
+          <input type="password" id="seal-pass2" autocomplete="new-password" placeholder="Repeat passphrase" aria-label="Repeat passphrase">
+          <p class="hint">Saved to vault.sealed instead of config.json. You will enter this passphrase every time the server starts. If it is lost, the vault cannot be recovered.</p>
+        </div>
+      </div>
       <div class="actions-stack">
         <button type="button" class="btn" id="btn-validate">Validate</button>
         <div class="grid grid-2">

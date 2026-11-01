@@ -534,11 +534,25 @@ async function saveConfig(): Promise<void> {
   }
 
   const cfg = buildConfigObject();
+  const sealOn = (document.getElementById("seal-enable") as HTMLInputElement | null)?.checked;
+  const pass = (document.getElementById("seal-pass") as HTMLInputElement | null)?.value ?? "";
+  const pass2 = (document.getElementById("seal-pass2") as HTMLInputElement | null)?.value ?? "";
+  if (sealOn && pass !== pass2) {
+    if (errorBox) {
+      errorBox.textContent = "The two passphrases do not match.";
+      errorBox.hidden = false;
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Save & Start Shellport";
+    }
+    return;
+  }
   try {
     const res = await fetch("/api/setup/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cfg),
+      body: JSON.stringify(sealOn ? { config: cfg, passphrase: pass } : cfg),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -662,6 +676,10 @@ async function initSetup(): Promise<void> {
   document.getElementById("btn-copy")?.addEventListener("click", copyConfigJson);
   document.getElementById("btn-download")?.addEventListener("click", downloadConfigJson);
   document.getElementById("btn-save")?.addEventListener("click", saveConfig);
+  document.getElementById("seal-enable")?.addEventListener("change", (e) => {
+    const fields = document.getElementById("seal-fields");
+    if (fields) fields.hidden = !(e.target as HTMLInputElement).checked;
+  });
 
   renderUsers();
   renderHosts();

@@ -8,7 +8,9 @@ import { inlineSecrets, plainConfigToSealedJson, socketPathFor, writeFileAtomic 
 import { loadSealedConfig } from "../src/server/config.js";
 import { createUnsealApp, UnsealLockout } from "../src/server/unseal.js";
 import { base32Encode } from "../src/server/totp.js";
-import { sealVault } from "../src/server/vault.js";
+import { openVault, sealVault } from "../src/server/vault.js";
+import { createSetupApp } from "../src/server/setup.js";
+import type { AddressInfo } from "node:net";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-ops-"));
 const FAST = { N: 1 << 10, r: 8, p: 1 };
@@ -88,4 +90,46 @@ test("the local socket unseals without touching the web lockout", async (t) => {
     await shutdown(500, "test");
   }
   assert.equal(fs.existsSync(socketPathFor(vault)), false);
+});
+
+test("the setup wizard can seal the configuration instead of writing config.json", async () => {
+  const sub = fs.mkdtempSync(path.join(dir, "setup-"));
+  const configPath = path.join(sub, "config.json");
+  const vaultPath = path.join(sub, "vault.sealed");
+  process.env.OPS_SETUP_PW = "pw-from-env";
+  let sealedWith: string | undefined;
+  const { server, shutdown } = createSetupApp({
+    configPath,
+    vaultPath,
+    publicDir: path.join(dir, "public"),
+    onSaved: (_cfg, v) => { sealedWith = v; },
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/setup/save`;
+  const config = {
+    server: { port: 8080, host: "127.0.0.1", publicUrl: "https://ssh.example.com", trustProxy: false },
+    github: { clientId: "id", clientSecret: "secret" },
+    users: [{ github: "alice", totpSecret: base32Encode(Buffer.alloc(20, 5)) }],
+    hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: { env: "OPS_SETUP_PW" } }, hostKeyFingerprints: ["SHA256:a"] }],
+  };
+  const send = (body: unknown) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const weak = await send({ config, passphrase: "short" });
+    assert.equal(weak.status, 400);
+    assert.equal(fs.existsSync(vaultPath), false);
+
+    const ok = await send({ config, passphrase: PASS });
+    assert.equal(ok.status, 200, JSON.stringify(await ok.clone().json()));
+    assert.equal((await ok.json()).sealed, true);
+    assert.equal(fs.existsSync(configPath), false);
+    const stored = JSON.parse(openVault(fs.readFileSync(vaultPath), PASS).toString("utf8"));
+    assert.equal(stored.hosts[0].auth.password, "pw-from-env");
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(sealedWith, vaultPath);
+
+    const again = await send({ config, passphrase: PASS });
+    assert.equal(again.status, 409);
+  } finally {
+    await shutdown(500, "test");
+  }
 });
