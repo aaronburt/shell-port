@@ -29,6 +29,7 @@ export interface AppOptions {
   exchange?: (code: string) => Promise<GitHubUser>;
   now?: () => number;
   timing?: TerminalTiming;
+  onSeal?: () => void;
 }
 
 export function createApp(cfg: LoadedConfig, opts: AppOptions) {
@@ -206,8 +207,17 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.get("/api/me", requireSession, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt });
+    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal });
   });
+
+  if (opts.onSeal) {
+    app.post("/api/seal", requireSession, requireSameOrigin, (req, res) => {
+      const s: UserSession = res.locals.session;
+      audit("seal", { ip: ipOf(req), user: s.login, githubId: s.githubId });
+      res.on("finish", () => setImmediate(opts.onSeal!));
+      res.status(204).end();
+    });
+  }
 
   app.get("/api/signins", requireSession, (req, res) => {
     const s: UserSession = res.locals.session;

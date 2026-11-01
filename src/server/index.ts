@@ -12,8 +12,21 @@ const vaultPath = process.env.SHELLPORT_VAULT ?? "vault.sealed";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, "public");
 
-function startApp(cfg: LoadedConfig) {
-  const { server, shutdown } = createApp(cfg, { publicDir });
+function startApp(cfg: LoadedConfig, vault?: string) {
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
+  let sealing = false;
+  const { server, shutdown } = createApp(cfg, {
+    publicDir,
+    onSeal: vault
+      ? () => {
+          if (sealing) return;
+          sealing = true;
+          for (const sig of signals) process.off(sig, onSignal);
+          shutdown(5000, "seal").then(() => startSealed(vault, { port: cfg.server.port, host: cfg.server.host }));
+        }
+      : undefined,
+  });
 
   server.listen(cfg.server.port, cfg.server.host, () => {
     audit("server.start", { listen: `${cfg.server.host}:${cfg.server.port}`, publicUrl: cfg.server.publicUrl, hosts: cfg.hosts.length });
@@ -21,7 +34,7 @@ function startApp(cfg: LoadedConfig) {
     if (!cfg.server.publicUrl.startsWith("https://")) audit("server.warning", { message: "publicUrl is not https; cookies are not marked Secure" });
   });
 
-  for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => shutdown(5000, sig).then(() => process.exit(0)));
+  for (const sig of signals) process.on(sig, onSignal);
 }
 
 function startSetup() {
@@ -54,9 +67,9 @@ function trustProxyFromEnv(value: string | undefined): boolean | number {
   return Number.isInteger(n) && n >= 0 ? n : false;
 }
 
-function startSealed(file: string) {
-  const port = Number(process.env.PORT || 8080);
-  const host = process.env.HOST || "0.0.0.0";
+function startSealed(file: string, listen?: { port: number; host: string }) {
+  const port = listen?.port ?? Number(process.env.PORT || 8080);
+  const host = listen?.host ?? (process.env.HOST || "0.0.0.0");
   const signals = ["SIGINT", "SIGTERM"] as const;
   const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
   const { server, shutdown } = createUnsealApp({
@@ -67,7 +80,7 @@ function startSealed(file: string) {
       const cfg = loadSealedConfig(plaintext);
       return () => {
         for (const sig of signals) process.off(sig, onSignal);
-        shutdown(1000, "unseal.complete").then(() => startApp(cfg));
+        shutdown(1000, "unseal.complete").then(() => startApp(cfg, file));
       };
     },
   });
