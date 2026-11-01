@@ -232,6 +232,7 @@ test("createSetupApp endpoints operate as expected", async () => {
     const statusBody = await status.json();
     assert.equal(statusBody.exists, false);
     assert.equal(statusBody.writable, true);
+    assert.equal(statusBody.vaultWritable, false);
 
     const totpRes = await fetch(`${baseUrl}/api/setup/totp`, {
       method: "POST",

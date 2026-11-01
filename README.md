@@ -156,7 +156,7 @@ Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of 
 
 **Migrating an existing install.** If Shellport starts and finds a plain `config.json` with no vault, it does not start the app. It opens a migration page instead and prints a one-time **migration code** in its log (`docker compose logs shellport`). Enter the code and a new passphrase, and Shellport encrypts the config (inlining `.env` values and key files), writes `vault.sealed`, and starts the app already unsealed. Or choose **Continue without encrypting** to start as before; you will be asked again on the next start unless you set `SHELLPORT_MIGRATE=off`. The page accepts the passphrase over HTTPS or on localhost only. The Docker compose files mount a `./vault` folder for this (create it first with `mkdir vault`; on Linux it must be writable by user 1000). Afterwards remove `config.json`, `.env` and `keys/` and their lines from the compose file, because Shellport refuses to start while a vault and a `config.json` both exist.
 
-**Create a vault.** Either tick **Encrypt the configuration with a passphrase** on the setup wizard's last step, or convert an existing setup:
+**Create a vault.** On a fresh install the setup wizard encrypts by default: the last step asks for a passphrase and writes `vault.sealed`, and no plain `config.json` is ever written (untick the box to write a plain config instead). The box is disabled when the vault folder cannot be written. Or convert an existing setup:
 
 ```sh
 npm run vault -- seal      # reads config.json, inlines .env and key-file values, writes vault.sealed

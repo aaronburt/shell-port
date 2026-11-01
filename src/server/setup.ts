@@ -172,6 +172,8 @@ export function createSetupApp(opts: SetupAppOptions) {
       configPath: opts.configPath,
       exists: fs.existsSync(opts.configPath),
       writable: isPathWritable(opts.configPath),
+      vaultPath: opts.vaultPath,
+      vaultWritable: Boolean(opts.vaultPath) && !fs.existsSync(opts.vaultPath!) && isPathWritable(opts.vaultPath!),
     });
   });
 
