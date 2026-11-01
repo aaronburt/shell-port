@@ -80,6 +80,13 @@
         </div>
       </div>
     </section>
+    <section class="acct-sec" id="acct-seal-sec" hidden>
+      <h5>Server</h5>
+      <div class="acct-row">
+        <div><strong>Vault</strong><small>Unsealed. Sealing signs everyone out, closes every terminal and locks the server until the passphrase is entered again.</small></div>
+        <button class="btn ghost" id="acct-seal" type="button">Seal server</button>
+      </div>
+    </section>
     <section class="acct-sec">
       <h5>Shortcuts</h5>
       <dl class="kv keys" id="keys"></dl>
@@ -98,6 +105,16 @@
     <div class="modal-foot">
       <button class="btn ghost" id="signout-cancel" type="button">Cancel</button>
       <button class="btn" id="signout-confirm" type="button">Sign out</button>
+    </div>
+  </div>
+</div>
+<div class="scrim" id="seal-scrim" hidden>
+  <div class="modal" id="seal-dialog" role="alertdialog" aria-modal="true" aria-labelledby="seal-title" aria-describedby="seal-text">
+    <h3 id="seal-title">Seal Shellport?</h3>
+    <p id="seal-text">Every session signs out and every open terminal disconnects. Nobody can sign in until the passphrase is entered again.</p>
+    <div class="modal-foot">
+      <button class="btn ghost" id="seal-cancel" type="button">Cancel</button>
+      <button class="btn" id="seal-confirm" type="button">Seal server</button>
     </div>
   </div>
 </div>

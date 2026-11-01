@@ -91,6 +91,7 @@ const timing: { passphraseWaitMs?: number; idleTimeoutMs?: number } = {};
 const code = () => hotp(TOTP_KEY, Math.floor(clock / 30_000));
 const passwordFile = path.join(secretDir, "password.txt");
 
+let sealCalls = 0;
 before(async () => {
   await new Promise<void>((r) => sshd.listen(0, "127.0.0.1", () => r()));
   sshPort = (sshd.address() as AddressInfo).port;
@@ -111,7 +112,7 @@ before(async () => {
       { github: 4242, totpSecret: base32Encode(TOTP_KEY) },
       ...["pp1", "pp2", "pp3", "throttle-user", "bystander"].map((github) => ({ github, totpSecret: base32Encode(TOTP_KEY) })),
     ],
-    limits: { maxTerminalsPerUser: 3, loginAttemptsPer15Min: 100, maxDownloadMB: 1 },
+    limits: { maxTerminalsPerUser: 3, loginAttemptsPer15Min: 200, maxDownloadMB: 1 },
     hosts: [
       { id: "fake", name: "fake-host", group: "Test", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "password", password: { env: "TEST_PW" } }, hostKeyFingerprints: [fp] },
@@ -131,6 +132,7 @@ before(async () => {
   }, process.cwd());
   app = createApp(cfg, {
     publicDir: path.resolve("dist/public"),
+    onSeal: () => { sealCalls++; },
     now: () => clock,
     timing,
     exchange: async (code) => {
@@ -984,6 +986,28 @@ test("config: host files flag and the download limit are validated", () => {
   for (const bad of [0, 5000, 1.5, "10"]) assert.throws(() => validateConfig({ ...base, limits: { maxDownloadMB: bad }, hosts: [host({})] }, "."), /maxDownloadMB/);
 });
 
+test("sealing needs a signed-in session and a same-origin request, then hands over to the seal hook", async () => {
+  const cookie = await signIn("aaronburt");
+  const me = await (await fetch(base + "/api/me", { headers: { cookie } })).json();
+  assert.equal(me.sealable, true);
+
+  const anon = await fetch(base + "/api/seal", { method: "POST", headers: { origin: base } });
+  assert.equal(anon.status, 401);
+  const crossSite = await fetch(base + "/api/seal", { method: "POST", headers: { cookie, origin: "https://evil.example.com" } });
+  assert.equal(crossSite.status, 403);
+  const noOrigin = await fetch(base + "/api/seal", { method: "POST", headers: { cookie } });
+  assert.equal(noOrigin.status, 403);
+  const pending = await githubStep("aaronburt");
+  const halfSignedIn = await fetch(base + "/api/seal", { method: "POST", headers: { cookie: pending, origin: base } });
+  assert.equal(halfSignedIn.status, 401);
+  assert.equal(sealCalls, 0);
+
+  const ok = await fetch(base + "/api/seal", { method: "POST", headers: { cookie, origin: base } });
+  assert.equal(ok.status, 204);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(sealCalls, 1);
+});
+
 test("shutdown closes open terminals with a reason, stops listening and returns before the deadline", async () => {
   const cookie = await signIn();
   const ts = [openWs(cookie, "fake"), openWs(cookie, "fake")];
@@ -998,4 +1022,24 @@ test("shutdown closes open terminals with a reason, stops listening and returns 
     assert.match(t.json.find((m) => m.state === "closed").reason, /shutting down/);
   }
   await assert.rejects(fetch(base + "/healthz"));
+});
+
+test("an app without a vault offers no way to seal", async () => {
+  const plain = createApp(
+    validateConfig({
+      server: { port: 1, publicUrl: "http://127.0.0.1:1" },
+      github: { clientId: "id", clientSecret: "secret" },
+      users: [{ github: 1, totpSecret: base32Encode(TOTP_KEY) }],
+      hosts: [{ id: "h", host: "127.0.0.1", username: "u", auth: { type: "password", password: "pw" }, hostKeyFingerprints: [fp] }],
+    }, process.cwd()),
+    { publicDir: path.resolve("dist/public") },
+  );
+  await new Promise<void>((r) => plain.server.listen(0, "127.0.0.1", () => r()));
+  try {
+    const port = (plain.server.address() as AddressInfo).port;
+    const r = await fetch(`http://127.0.0.1:${port}/api/seal`, { method: "POST", headers: { origin: `http://127.0.0.1:${port}` } });
+    assert.equal(r.status, 404);
+  } finally {
+    await plain.shutdown(200, "test");
+  }
 });

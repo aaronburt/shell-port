@@ -6,7 +6,7 @@ import { feedPassphrase } from "./passphrase.js";
 import { FilesPane } from "./files.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number }
+interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -828,6 +828,61 @@ $("signout-confirm").onclick = async () => {
   location.replace("/");
 };
 
+const sealScrim = $("seal-scrim");
+
+function openSealDialog() {
+  sealScrim.hidden = false;
+  $("seal-cancel").focus();
+}
+
+function closeSealDialog() {
+  if (sealScrim.hidden) return;
+  sealScrim.hidden = true;
+  accountBtn.focus();
+}
+
+$("acct-seal").onclick = () => {
+  acct.close();
+  openSealDialog();
+};
+$("seal-cancel").onclick = closeSealDialog;
+sealScrim.addEventListener("pointerdown", (e) => {
+  if (e.target === sealScrim) closeSealDialog();
+});
+sealScrim.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSealDialog();
+  } else if (e.key === "Tab") {
+    const buttons = [$("seal-cancel"), $("seal-confirm")];
+    const i = buttons.indexOf(document.activeElement as HTMLElement);
+    e.preventDefault();
+    buttons[(i + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length].focus();
+  }
+});
+
+$("seal-confirm").onclick = async () => {
+  const confirm = $<HTMLButtonElement>("seal-confirm");
+  confirm.disabled = true;
+  const r = await fetch("/api/seal", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+  confirm.disabled = false;
+  if (!r?.ok) {
+    closeSealDialog();
+    notify(`Sealing failed (${failure(r)}). The server is still unsealed.`);
+    return;
+  }
+  for (const t of tabs) for (const p of panesOf(t)) p.ws?.close();
+  tabs = [];
+  for (let i = 0; i < 40; i++) {
+    try {
+      const h = await fetch("/healthz", { cache: "no-store" });
+      if (h.ok && (await h.json()).sealed) break;
+    } catch {}
+    await new Promise((res) => setTimeout(res, 400));
+  }
+  location.replace("/");
+};
+
 function initialsOf(name: string, login: string): string {
   const words = (name || login).trim().split(/\s+/).filter(Boolean);
   const first = (w: string) => Array.from(w)[0] ?? "";
@@ -851,6 +906,7 @@ function renderMe(me: Me) {
   }
   $("me-login").textContent = me.login;
   $("acct-title").textContent = me.login;
+  $("acct-seal-sec").hidden = !me.sealable;
   setInterval(() => {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
