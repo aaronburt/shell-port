@@ -66,7 +66,26 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 
 .term-wrap { flex: 1; min-height: 0; display: flex; position: relative; }
 .terms { flex: 1; min-width: 0; position: relative; }
-.pane { position: absolute; inset: 0; padding: 10px 0 4px 12px; display: flex; flex-direction: column; }
+.layout { position: absolute; inset: 0; display: flex; }
+.layout > * { flex: 1; min-width: 0; min-height: 0; }
+.split { display: flex; }
+.split.row { flex-direction: row; }
+.split.col { flex-direction: column; }
+.cell { display: flex; min-width: 0; min-height: 0; }
+.cell > * { flex: 1; min-width: 0; min-height: 0; }
+.gutter { flex: none; position: relative; z-index: 2; touch-action: none; background: color-mix(in srgb, var(--term-fg) 20%, var(--term-bg)); }
+.gutter::after { content: ""; position: absolute; }
+.split.row > .gutter { width: 1px; cursor: col-resize; }
+.split.row > .gutter::after { inset: 0 -4px; }
+.split.col > .gutter { height: 1px; cursor: row-resize; }
+.split.col > .gutter::after { inset: -4px 0; }
+.gutter:hover, .gutter.drag { background: var(--accent); }
+.pane { position: relative; padding: 10px 0 4px 12px; display: flex; flex-direction: column; background: var(--term-bg); }
+.layout.multi .pane.focus::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 2px 0 var(--accent); pointer-events: none; }
+.pane-x { position: absolute; top: 8px; right: 10px; z-index: 3; display: none; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--muted); line-height: 1; cursor: pointer; }
+.pane-x:hover { color: var(--fg); border-color: var(--accent); }
+.layout.multi .pane:hover .pane-x, .layout.multi .pane:focus-within .pane-x { display: grid; }
+@media (hover: none) { .layout.multi .pane-x { display: grid; } }
 .pane .xt { flex: 1; min-height: 0; }
 .pane .xterm .xterm-viewport { background: var(--term-bg) !important; }
 .pane .banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border-radius: 8px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0,0,0,.4); font-size: 13px; max-width: calc(100% - 32px); }
