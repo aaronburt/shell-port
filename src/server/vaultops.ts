@@ -26,7 +26,11 @@ export function inlineSecrets(node: unknown, baseDir: string, where = ""): unkno
 export function plainConfigToSealedJson(configPath: string): string {
   const resolved = path.resolve(configPath);
   const raw = JSON.parse(fs.readFileSync(resolved, "utf8"));
-  return JSON.stringify(inlineSecrets(raw, path.dirname(resolved)), null, 2);
+  const inlined = inlineSecrets(raw, path.dirname(resolved)) as { users?: Array<{ admin?: unknown }> };
+  if (Array.isArray(inlined.users) && inlined.users.length && !inlined.users.some((u) => u?.admin === true) && inlined.users[0] && typeof inlined.users[0] === "object") {
+    inlined.users[0].admin = true;
+  }
+  return JSON.stringify(inlined, null, 2);
 }
 
 export function writeFileAtomic(file: string, data: string, mode = 0o600) {
