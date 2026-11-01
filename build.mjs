@@ -37,6 +37,16 @@ await esbuild.build({
   outfile: "dist/totp-cli.js",
 });
 
+await esbuild.build({
+  entryPoints: ["src/cli/vault.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node24",
+  packages: "external",
+  outfile: "dist/vault-cli.js",
+});
+
 const built = {};
 for (const [file, meta] of Object.entries(client.metafile.outputs)) {
   if (!meta.entryPoint) continue;

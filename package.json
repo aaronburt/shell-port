@@ -6,9 +6,10 @@
     "build": "node build.mjs",
     "start": "node dist/server.js",
     "totp": "npm run build && node dist/totp-cli.js",
+    "vault": "npm run build && node dist/vault-cli.js",
     "typecheck": "tsc -p .",
     "demo:setup": "node scripts/demo-setup.mjs",
-    "test": "npm run build && esbuild test/e2e.test.ts test/unit.test.ts test/vault.test.ts test/unseal.test.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outdir=.test-build --out-extension:.js=.mjs && node --test .test-build/e2e.test.mjs .test-build/unit.test.mjs .test-build/vault.test.mjs .test-build/unseal.test.mjs",
+    "test": "npm run build && esbuild test/e2e.test.ts test/unit.test.ts test/vault.test.ts test/unseal.test.ts test/vaultops.test.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outdir=.test-build --out-extension:.js=.mjs && node --test .test-build/e2e.test.mjs .test-build/unit.test.mjs .test-build/vault.test.mjs .test-build/unseal.test.mjs .test-build/vaultops.test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:full": "npm run build && esbuild test/smoke/full.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=.test-build/smoke-full.mjs && node --test --test-timeout=240000 .test-build/smoke-full.mjs"
   },
