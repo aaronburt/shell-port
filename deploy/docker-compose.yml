@@ -6,9 +6,12 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     env_file: .env
+    environment:
+      SHELLPORT_VAULT: /vault/vault.sealed
     volumes:
       - ./config.json:/config/config.json:ro
       - ./keys:/config/keys:ro
+      - ./vault:/vault
     expose: ["8080"]
 
   caddy:
