@@ -150,6 +150,42 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 
 **Setup wizard.** If Shellport starts without a `config.json`, it opens a setup wizard instead of the app. The wizard can configure the server, GitHub OAuth, session limits and SSH hosts. It can also generate TOTP secrets with QR codes, check the config against the schema, and download `config.json`. You can force the wizard with `SHELLPORT_SETUP=1`.
 
+## Sealed mode
+
+Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of `config.json` and `.env`, Shellport has one file, `vault.sealed`, and it starts "sealed": the only page it serves is an unseal screen. Someone who knows the passphrase unlocks it in the browser, after which the usual GitHub sign-in and TOTP code apply. Nothing is ever written to disk in plain text.
+
+**Create a vault.** Either tick **Encrypt the configuration with a passphrase** on the setup wizard's last step, or convert an existing setup:
+
+```sh
+npm run vault -- seal      # reads config.json, inlines .env and key-file values, writes vault.sealed
+```
+
+Then delete `config.json`, `.env` and the key files. Shellport refuses to start while a vault and a `config.json` both exist. In Docker, run the command with `docker compose run --rm --no-deps --entrypoint node shellport dist/vault-cli.js seal`.
+
+**Day to day.**
+
+- After every restart the server is sealed until someone enters the passphrase. Passphrases need at least 12 characters.
+- **Seal server** in the account menu locks it again: everyone is signed out and every terminal closes.
+- Five wrong passphrases lock unsealing for everyone for a minute, then 2, 5 and 15 minutes on repeats. Unsealing is accepted over HTTPS or from the local machine only.
+- With a vault, secrets must be written into it directly. `{"env": ...}` and `{"file": ...}` references are refused, and `npm run vault -- seal` and `import` resolve them for you.
+- While sealed, only these environment variables apply: `PORT`, `HOST`, `SHELLPORT_TRUST_PROXY` (set it behind a reverse proxy so the HTTPS check works), `SHELLPORT_VAULT` (default `vault.sealed`) and `SHELLPORT_CONFIG`. The sealed `/healthz` still answers 200 and reports `"sealed": true`.
+
+**Command line.** Run `npm run vault -- <command>` (or `node dist/vault-cli.js <command>`):
+
+| Command | What it does |
+| --- | --- |
+| `seal` | Encrypt `config.json` into `vault.sealed`. |
+| `unseal` | Unlock a running sealed server on the same machine through a local socket. It is not subject to the web lockout, so you can still recover if someone locked it. |
+| `edit` | Decrypt to a private temporary file, open `$EDITOR`, check the result, and re-encrypt. |
+| `check` | Verify the passphrase and that the config is valid. |
+| `passphrase` | Change the passphrase without re-encrypting the contents. |
+| `export <file>` | Write the decrypted config as plain JSON (mode 0600). Handle it like the secrets it contains. |
+| `import <file>` | Replace the vault contents from a plain JSON config. |
+
+A running server keeps the config it unsealed with. After `edit` or `import`, seal and unseal it again, or restart it. To back up, copy `vault.sealed`; it is safe to store anywhere the passphrase is not.
+
+**There is no recovery.** If the passphrase is lost, the vault cannot be opened. Keep the passphrase in a password manager and a second copy of `vault.sealed` somewhere separate. A damaged or unsupported vault stops the server with a clear message instead of falling back to the setup wizard.
+
 ## Using Shellport
 
 - **Tab bar.** The sidebar toggle and the host search box sit at the left. Each session is a tab. Drag tabs to reorder them.
