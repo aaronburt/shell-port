@@ -18,6 +18,8 @@ const USAGE = `Usage: vault-cli <command>
   edit              Edit the sealed config in $EDITOR and re-encrypt it
   check             Verify the passphrase and that the sealed config is valid
   passphrase        Change the vault passphrase
+  export <file>     Write the decrypted config to a plain JSON file (0600, never overwrites)
+  import <file>     Replace the vault contents with a plain JSON config (keeps the passphrase)
 
 Set SHELLPORT_VAULT and SHELLPORT_CONFIG to use other paths.`;
 
@@ -137,7 +139,38 @@ async function passphraseCmd() {
   console.log("Passphrase changed.");
 }
 
-const commands: Record<string, () => Promise<void>> = { seal, unseal, edit, check, passphrase: passphraseCmd };
+function arg(): string {
+  return process.argv[3] ?? die("Give a file path.");
+}
+
+async function exportCmd() {
+  const out = path.resolve(arg());
+  if (fs.existsSync(out)) die(`${out} already exists.`);
+  const { plain } = await open(readVault());
+  try {
+    fs.writeFileSync(out, plain, { mode: 0o600, flag: "wx" });
+  } finally {
+    plain.fill(0);
+  }
+  console.log(`Wrote ${out}. It holds every secret in plain text: store it somewhere safe and delete it when done.`);
+}
+
+async function importCmd() {
+  const src = path.resolve(arg());
+  let json: string;
+  try {
+    json = plainConfigToSealedJson(src);
+    loadSealedConfig(json);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  const { passphrase, plain } = await open(readVault(), "Vault passphrase: ");
+  plain.fill(0);
+  writeFileAtomic(vaultPath, sealVault(json, passphrase));
+  console.log(`Replaced the contents of ${vaultPath}. A running server keeps its old config until it is sealed and unsealed again, or restarted.`);
+}
+
+const commands: Record<string, () => Promise<void>> = { seal, unseal, edit, check, passphrase: passphraseCmd, export: exportCmd, import: importCmd };
 const cmd = commands[process.argv[2] ?? ""];
 if (!cmd) {
   console.log(USAGE);

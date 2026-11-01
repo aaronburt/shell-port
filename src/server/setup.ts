@@ -4,7 +4,9 @@ import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import QRCode from "qrcode";
 import { newSecret, otpauthUri, base32Decode } from "./totp.js";
-import { loadConfig, type LoadedConfig } from "./config.js";
+import { loadConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
+import { checkPassphraseStrength, sealVault } from "./vault.js";
+import { inlineSecrets, writeFileAtomic } from "./vaultops.js";
 import { audit } from "./log.js";
 
 export interface SetupValidationResult {
@@ -125,12 +127,15 @@ export function isPathWritable(targetPath: string): boolean {
 export interface SetupAppOptions {
   configPath: string;
   publicDir: string;
-  onSaved?: (cfg: LoadedConfig) => void;
+  vaultPath?: string;
+  trustProxy?: boolean | number;
+  onSaved?: (cfg: LoadedConfig, vaultPath?: string) => void;
 }
 
 export function createSetupApp(opts: SetupAppOptions) {
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", opts.trustProxy ?? false);
 
   app.use((req, res, next) => {
     res.setHeader(
@@ -189,10 +194,40 @@ export function createSetupApp(opts: SetupAppOptions) {
   });
 
   app.post("/api/setup/save", express.json({ limit: "128kb" }), (req, res) => {
-    const config = req.body;
+    const wrapped = req.body && typeof req.body === "object" && req.body.config && typeof req.body.config === "object";
+    const config = wrapped ? req.body.config : req.body;
+    const passphrase = wrapped && typeof req.body.passphrase === "string" && req.body.passphrase ? req.body.passphrase : undefined;
     const result = validateSetupConfig(config);
     if (!result.valid) {
       return res.status(400).json({ ok: false, errors: result.errors });
+    }
+
+    if (passphrase !== undefined) {
+      if (!opts.vaultPath) return res.status(400).json({ ok: false, error: "Sealing is not available here." });
+      if (!req.secure && !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.ip ?? ""))
+        return res.status(403).json({ ok: false, error: "A passphrase can only be sent over HTTPS or from the local machine." });
+      const weak = checkPassphraseStrength(passphrase);
+      if (weak) return res.status(400).json({ ok: false, error: weak });
+      if (fs.existsSync(opts.vaultPath)) return res.status(409).json({ ok: false, error: `${opts.vaultPath} already exists.` });
+      let sealed: LoadedConfig;
+      let json: string;
+      try {
+        json = JSON.stringify(inlineSecrets(config, path.dirname(path.resolve(opts.configPath))), null, 2);
+        sealed = loadSealedConfig(json);
+      } catch (e) {
+        return res.status(400).json({ ok: false, error: (e as Error).message });
+      }
+      try {
+        const dir = path.dirname(path.resolve(opts.vaultPath));
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        writeFileAtomic(path.resolve(opts.vaultPath), sealVault(json, passphrase));
+      } catch (e) {
+        return res.status(403).json({ ok: false, readOnly: true, error: `Cannot write to ${opts.vaultPath}: ${(e as Error).message}` });
+      }
+      audit("setup.sealed", { path: opts.vaultPath });
+      res.json({ ok: true, saved: true, sealed: true, canTransition: Boolean(opts.onSaved) });
+      if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath), 500);
+      return;
     }
 
     try {

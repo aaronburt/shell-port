@@ -45,11 +45,13 @@ function startSetup() {
   let appStarted = false;
   const { server, shutdown } = createSetupApp({
     configPath,
+    vaultPath,
     publicDir,
-    onSaved: (savedCfg) => {
+    trustProxy: trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY),
+    onSaved: (savedCfg, savedVault) => {
       if (appStarted) return;
       appStarted = true;
-      shutdown(1000, "setup.complete").then(() => startApp(savedCfg));
+      shutdown(1000, "setup.complete").then(() => startApp(savedCfg, savedVault));
     },
   });
 
