@@ -1347,6 +1347,7 @@ test("UI: a failed sign out says so and keeps the page and session", async () =>
     await ui.locator("#signout-confirm").click();
     await until("failed signout notice", async () => /Sign out failed \(status 403\)\. You are still signed in/.test(await ui.locator("#notice").innerText()));
     assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0, "the page must not reload to the sign-in page");
+    await closeAccount(ui);
     assert.match(await statusText(ui), /connected/, "the terminal must stay open");
     assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200);
   } finally {
