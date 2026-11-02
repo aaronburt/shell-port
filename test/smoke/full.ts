@@ -581,11 +581,9 @@ async function uiSignIn(ctx: BrowserContext): Promise<Page> {
   assert.ok(pending, "a pending session cookie should exist on the TOTP page");
   clock += 30_000;
   await page.fill("#code", code() === "000000" ? "111111" : "000000");
-  await page.click("#go");
   await page.waitForSelector("#error:not([hidden])");
   assert.match(await page.textContent("#error") ?? "", /didn't work/);
   await page.fill("#code", code());
-  await page.click("#go");
   await page.waitForSelector("#hosts .host");
   const full = await sidOf(ctx);
   assert.ok(full && full !== pending, "the session cookie must rotate after the second factor");
@@ -1232,7 +1230,6 @@ async function phoneSignIn(login: string) {
   await page.waitForSelector("#code");
   clock += 30_000;
   await page.fill("#code", code());
-  await page.click("#go");
   await page.waitForSelector("#rail-toggle");
   return { ctx, page };
 }
