@@ -11,19 +11,36 @@ import { passkeyStore } from "./passkeys.js";
 import { createMigrateApp } from "./migrate.js";
 import crypto from "node:crypto";
 import { audit } from "./log.js";
+import { AuditLog, fileSink } from "./auditlog.js";
 
 const configPath = process.env.SHELLPORT_CONFIG ?? "config.json";
 const vaultPath = process.env.SHELLPORT_VAULT ?? "vault.sealed";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, "public");
 
-function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer) {
+function openAuditLog(cfg: LoadedConfig, vault?: string, dek?: Buffer): AuditLog {
+  const file = process.env.SHELLPORT_AUDIT ?? path.join(path.dirname(path.resolve(vault ?? configPath)), "audit.log");
+  const onError = (message: string) => audit("server.warning", { message: `the audit log cannot be saved to ${file} (${message}); it is kept in memory only. Set SHELLPORT_AUDIT to a writable file` });
+  const retentionDays = cfg.limits.auditRetentionDays;
+  if (vault && !dek) return new AuditLog({ retentionDays, onError });
+  try {
+    return new AuditLog({ sink: fileSink(file, vault ? dek : undefined), retentionDays, onError });
+  } catch (e) {
+    onError((e as Error).message);
+    return new AuditLog({ retentionDays });
+  }
+}
+
+function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = false) {
+  const auditLog = openAuditLog(cfg, vault, dek);
+  if (unsealed) auditLog.add({ kind: "vault_unsealed", user: "", ip: "", detail: "Passphrase accepted on the unseal page" });
   const hostStore: HostStore | undefined = vault ? (dek ? vaultStore(vault, dek) : undefined) : fileStore(configPath);
   const signals = ["SIGINT", "SIGTERM"] as const;
   const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
   let sealing = false;
   const { server, shutdown } = createApp(cfg, {
     publicDir,
+    auditLog,
     hostStore,
     passkeyStore: vault ? (dek ? passkeyStore("vault", vaultIo(vault, dek)) : undefined) : passkeyStore("file", fileIo(configPath)),
     onSeal: vault
@@ -31,7 +48,7 @@ function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer) {
           if (sealing) return;
           sealing = true;
           for (const sig of signals) process.off(sig, onSignal);
-          shutdown(5000, "seal").then(() => { dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
+          shutdown(5000, "seal").then(() => { auditLog.stop(); dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
         }
       : undefined,
   });
@@ -94,7 +111,7 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
       return () => {
         if (promoted) audit("server.notice", { message: `the vault has no admin, so ${promoted} (the first user) is treated as admin` });
         for (const sig of signals) process.off(sig, onSignal);
-        shutdown(1000, "unseal.complete").then(() => startApp(cfg, file, dek));
+        shutdown(1000, "unseal.complete").then(() => startApp(cfg, file, dek, true));
       };
     },
   });

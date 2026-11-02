@@ -14,6 +14,7 @@ import { authorizeUrl, exchangeCode, type GitHubUser } from "./github.js";
 import { openTerminal, type TerminalInfo, type TerminalTiming } from "./proxy.js";
 import { audit } from "./log.js";
 import { ActivityLog, sidTag } from "./activity.js";
+import { AuditLog, AUDIT_GROUPS, AUDIT_KINDS, auditCsv, type AuditKind } from "./auditlog.js";
 import * as files from "./sftp.js";
 
 const PERMISSIONS_POLICY = [
@@ -36,6 +37,7 @@ export interface AppOptions {
   hostStore?: HostStore;
   probeHostKey?: KeyProbe;
   passkeyStore?: PasskeyStore;
+  auditLog?: AuditLog;
 }
 
 export function createApp(cfg: LoadedConfig, opts: AppOptions) {
@@ -51,6 +53,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const passphraseLimiter = new RateLimiter(10, 15 * 60_000);
   const hostAddLimiter = new RateLimiter(20, 15 * 60_000);
   const activity = new ActivityLog();
+  const auditLog = opts.auditLog ?? new AuditLog({ retentionDays: cfg.limits.auditRetentionDays });
   const terminals = new Map<number, Set<TerminalInfo>>();
   const terminalsBySession = new Map<string, Set<TerminalInfo>>();
 
@@ -64,6 +67,8 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     stringifySetCookie({ name, value, ...opts });
   const cookieValue = (header: string | undefined, name: string) => parseCookie(header ?? "")[name];
   const ipOf = (req: Request) => req.ip ?? "";
+  const rec = (kind: AuditKind, req: Request, user: string, extra: { host?: string; detail?: string } = {}) =>
+    auditLog.add({ kind, user, ip: ipOf(req), ...extra });
   const anySession = (cookieHeader: string | undefined): UserSession | undefined =>
     sessions.get(cookieValue(cookieHeader, SID));
   const getSession = (cookieHeader: string | undefined): UserSession | undefined => {
@@ -166,6 +171,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     const entry = findUser(cfg, user);
     if (!entry) {
       audit("login.denied", { ip: ipOf(req), user: user.login, githubId: user.id });
+      rec("signin_denied", req, user.login, { detail: "Not on this server's allowlist" });
       res.setHeader("Set-Cookie", clearState);
       return res.redirect("/?error=denied");
     }
@@ -193,6 +199,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     if (counter === undefined || counter <= (lastTotpCounter.get(s.githubId) ?? -1)) {
       s.totpFailures++;
       audit("login.totp_failed", { ip: ipOf(req), user: s.login, githubId: s.githubId, failures: s.totpFailures });
+      rec("totp_failed", req, s.login, { detail: `At sign-in, attempt ${s.totpFailures} of ${MAX_TOTP_FAILURES}` });
       activity.add({ kind: "totp_failed", githubId: s.githubId, ip: ipOf(req) });
       if (s.totpFailures >= MAX_TOTP_FAILURES) {
         sessions.destroy(s.id);
@@ -204,6 +211,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     lastTotpCounter.set(s.githubId, counter);
     const full = sessions.promote(s);
     audit("login.ok", { ip: ipOf(req), user: s.login, githubId: s.githubId });
+    rec("signin", req, s.login, { detail: "GitHub + authenticator code" });
     activity.add({ kind: "signin", githubId: s.githubId, ip: ipOf(req), sid: sidTag(full.id) });
     res.setHeader("Set-Cookie", serializeCookie(SID, full.id, cookieOpts(cfg.session.ttlHours * 3600)));
     res.status(204).end();
@@ -220,6 +228,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     if (!loginLimiter.hit(ip)) return res.status(429).json({ error: "rate_limited" });
     const fail = (reason: string, extra: Record<string, unknown> = {}) => {
       audit("login.passkey_failed", { ip, reason, ...extra });
+      auditLog.add({ kind: "passkey_failed", user: typeof extra.user === "string" ? extra.user : "", ip, detail: reason.replace(/_/g, " ") });
       res.status(401).json({ error: "passkey_failed" });
     };
     const challenge = logins.take(req.body?.challengeId);
@@ -259,6 +268,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       "passkey",
     );
     audit("login.ok", { ip, user: s.login, githubId: s.githubId, method: "passkey", passkey: passkey.name });
+    auditLog.add({ kind: "signin", user: s.login, ip, detail: `Passkey (${passkey.name})` });
     activity.add({ kind: "signin", githubId: s.githubId, ip, sid: sidTag(s.id), method: "passkey" });
     res.setHeader("Set-Cookie", serializeCookie(SID, s.id, cookieOpts(cfg.session.ttlHours * 3600)));
     res.status(204).end();
@@ -270,6 +280,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const unlockFailed = (req: Request, res: Response, s: UserSession, how: "totp" | "passkey", reason: string) => {
     s.totpFailures++;
     audit("lock.unlock_failed", { ip: ipOf(req), user: s.login, githubId: s.githubId, method: how, reason, failures: s.totpFailures });
+    rec("unlock_failed", req, s.login, { detail: `${how === "totp" ? "Wrong authenticator code" : "Passkey rejected"}, attempt ${s.totpFailures} of ${MAX_TOTP_FAILURES}${s.totpFailures >= MAX_TOTP_FAILURES ? ", session ended" : ""}` });
     if (how === "totp") activity.add({ kind: "totp_failed", githubId: s.githubId, ip: ipOf(req) });
     if (s.totpFailures >= MAX_TOTP_FAILURES) {
       sessions.destroy(s.id);
@@ -364,6 +375,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     app.post("/api/seal", requireSession, requireSameOrigin, (req, res) => {
       const s: UserSession = res.locals.session;
       audit("seal", { ip: ipOf(req), user: s.login, githubId: s.githubId });
+      rec("vault_sealed", req, s.login, { detail: "Everyone signed out" });
       res.on("finish", () => setImmediate(opts.onSeal!));
       res.status(204).end();
     });
@@ -452,6 +464,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       throw e;
     }
     audit("passkey.add", { ip: ipOf(req), user: s.login, githubId: s.githubId, name, store: store.kind });
+    rec("passkey_added", req, s.login, { detail: name });
     res.status(201).json(publicPasskey(record));
   }));
 
@@ -468,6 +481,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       throw e;
     }
     audit("passkey.remove", { ip: ipOf(req), user: s.login, githubId: s.githubId, name: target.name, store: store.kind });
+    rec("passkey_removed", req, s.login, { detail: target.name });
     res.status(204).end();
   }));
 
@@ -508,6 +522,33 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     );
   });
 
+  const auditFilter = (req: Request) => {
+    const str = (v: unknown) => (typeof v === "string" && v ? v.slice(0, 120) : undefined);
+    const days = Number(req.query.days);
+    return {
+      user: str(req.query.user),
+      host: str(req.query.host),
+      type: str(req.query.type),
+      from: Number.isFinite(days) && days > 0 ? Date.now() - days * 86_400_000 : undefined,
+    };
+  };
+
+  app.get("/api/audit", requireSession, requireAdmin, (req, res) => {
+    const { items, total } = auditLog.query({ ...auditFilter(req), limit: Number(req.query.limit) || 50, offset: Number(req.query.offset) || 0 });
+    res.json({ items, total, ...auditLog.choices(), groups: AUDIT_GROUPS, kinds: AUDIT_KINDS, status: auditLog.status() });
+  });
+
+  app.get("/api/audit/export", requireSession, requireAdmin, (req, res) => {
+    const fetchSite = req.headers["sec-fetch-site"];
+    if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") return res.status(403).json({ error: "bad_origin" });
+    const s: UserSession = res.locals.session;
+    const entries = auditLog.all(auditFilter(req));
+    audit("audit.export", { ip: ipOf(req), user: s.login, rows: entries.length });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="shellport-audit.csv"');
+    res.send(auditCsv(entries));
+  });
+
   app.get("/api/keys", requireSession, requireAdmin, (_req, res) => {
     res.json(listKeys(cfg));
   });
@@ -530,8 +571,16 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const keySource = (body: Record<string, any>) =>
     body.key && typeof body.key === "object" ? ("upload" in body.key ? "uploaded" : "keep" in body.key ? "kept" : "existing") : "none";
 
+  const target = (h: { username: string; host: string; port?: number }) => `${h.username}@${h.host}${h.port && h.port !== 22 ? `:${h.port}` : ""}`;
+  const recordKey = (req: Request, s: UserSession, h: { name: string; auth: { type: string; keyName?: string; passphrase?: unknown } }, body: Record<string, any>) => {
+    if (keySource(body) !== "uploaded" || h.auth.type !== "key") return;
+    rec("key_uploaded", req, s.login, { host: h.name, detail: `${h.auth.keyName ?? "uploaded key"}${h.auth.passphrase === false ? " (no passphrase, confirmed)" : ""}` });
+  };
+
   app.post("/api/hosts", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), hostRoute("add", async ({ req, res, s, store, body }) => {
     const host = await addHost(cfg, store, body as never, opts.probeHostKey);
+    rec("host_added", req, s.login, { host: host.name, detail: target(host) });
+    recordKey(req, s, host as never, body);
     audit("host.add", {
       ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
       key: keySource(body), store: store.kind,
@@ -550,6 +599,8 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.put("/api/hosts/:id", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "32kb" }), hostRoute("edit", async ({ req, res, s, store, body }) => {
     const host = await updateHost(cfg, store, String(req.params.id), body as never, opts.probeHostKey);
+    rec("host_edited", req, s.login, { host: host.name, detail: target(host) });
+    recordKey(req, s, host as never, body);
     audit("host.edit", {
       ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
       key: keySource(body), store: store.kind,
@@ -568,6 +619,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       }
     }
     audit("host.delete", { ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, closedTerminals: closed, store: store.kind });
+    rec("host_deleted", req, s.login, { host: host.name, detail: `${target(host)}${closed ? `, ${closed} open ${closed === 1 ? "terminal" : "terminals"} closed` : ""}` });
     res.status(204).end();
   }));
 
@@ -687,7 +739,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       const bySess = terminalsBySession.get(s.id) ?? new Set<TerminalInfo>();
       terminalsBySession.set(s.id, bySess);
       const t = openTerminal({
-        ws, cfg, host, session: s, activity, passphraseLimiter, ip, timing: opts.timing,
+        ws, cfg, host, session: s, activity, auditLog, passphraseLimiter, ip, timing: opts.timing,
         cols: url.searchParams.get("cols"),
         rows: url.searchParams.get("rows"),
         onClose: () => {
@@ -723,5 +775,5 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       server.closeIdleConnections();
     }));
 
-  return { app, server, sessions, shutdown };
+  return { app, server, sessions, shutdown, auditLog };
 }

@@ -7,6 +7,7 @@ import { FilesPane } from "./files.js";
 import { initAddHost } from "./addhost.js";
 import { initPasskeys } from "./passkeys.js";
 import { initLock } from "./lock.js";
+import { initAudit } from "./audit.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
@@ -72,6 +73,11 @@ let hosts: Host[] = [];
 let canEdit = false;
 let tabs: Tab[] = [];
 let active: Tab | undefined;
+type PageKind = "audit" | "account";
+interface Page { kind: PageKind; title: string; el: HTMLElement }
+const pages: Page[] = [];
+let activePage: Page | undefined;
+const shown = () => (activePage ? undefined : active);
 let seq = 0;
 let paneSeq = 0;
 let nodeSeq = 0;
@@ -161,7 +167,7 @@ function renderHosts() {
   $("hosts").innerHTML = groups.size
     ? [...groups].map(([g, items]) => `<div class="group"><h4><span>${esc(g)}</span><span>${items.length}</span></h4>${items.map((h) => `
         <div class="host-row" draggable="true" data-drag-host="${esc(h.id)}">
-          <button class="host ${active?.focus.host.id === h.id ? "active" : ""}" data-host="${esc(h.id)}">
+          <button class="host ${shown()?.focus.host.id === h.id ? "active" : ""}" data-host="${esc(h.id)}">
             <span class="dot ${live.has(h.id) ? "live" : ""}"></span>
             <span style="min-width:0"><span class="name">${esc(h.name)}</span><span class="addr">${esc(h.addr)}</span></span>
             ${h.tag ? `<span class="tag">${esc(h.tag)}</span>` : "<span></span>"}
@@ -199,7 +205,7 @@ $<HTMLInputElement>("host-search").addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     (e.target as HTMLInputElement).value = "";
     renderHosts();
-    active?.focus.term.focus();
+    shown()?.focus.term.focus();
   }
 });
 
@@ -211,7 +217,7 @@ function toggleRail() {
   try { localStorage.setItem("sp.rail", collapsed ? "0" : "1"); } catch {}
   setTimeout(fitActive, 200);
 }
-$("rail-toggle").onclick = () => { toggleRail(); active?.focus.term.focus(); };
+$("rail-toggle").onclick = () => { toggleRail(); shown()?.focus.term.focus(); };
 function showRail() {
   const ws = $("ws");
   if (matchMedia("(max-width: 760px)").matches) ws.classList.add("rail-open");
@@ -228,16 +234,30 @@ function setDrawer(open: boolean, remember = true) {
 function toggleDrawer() {
   setDrawer($("drawer").classList.contains("closed"));
 }
-$("drawer-toggle").onclick = () => { toggleDrawer(); active?.focus.term.focus(); };
+$("drawer-toggle").onclick = () => { toggleDrawer(); shown()?.focus.term.focus(); };
+
+const X_ICON = `<svg class="x-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
+const FOLDER_ICON = `<svg class="f-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>`;
+const PAGE_ICONS: Record<PageKind, string> = {
+  audit: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 4h14M5 9h14M5 14h14M5 19h9"/></svg>`,
+  account: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
+};
 
 function renderTabs() {
   const el = $("tab-scroll");
+  const front = (t: Tab) => t === active && !activePage;
+  const closer = (t: Tab) => canBrowse(t)
+    ? `<span class="tab-files ${t.mode === "files" ? "on" : ""}" role="button" tabindex="0" data-files="${t.key}" aria-label="Files on ${esc(t.host.name)}" aria-pressed="${t.mode === "files"}" title="Files (hold Shift to close the tab)">${FOLDER_ICON}${X_ICON}</span>`
+    : `<span class="tab-files tab-x" role="button" tabindex="0" data-tabclose="${t.key}" aria-label="Close ${esc(t.title)}" title="Close tab (hold Shift)">${X_ICON}</span>`;
   el.innerHTML = tabs.map((t) => `
-    <button role="tab" aria-selected="${t === active}" class="tab ${t === active ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${tabState(t)}" title="${esc(t.host.addr)}">
-      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${canBrowse(t) ? `<span class="tab-files ${t.mode === "files" ? "on" : ""}" role="button" tabindex="0" data-files="${t.key}" aria-label="Files on ${esc(t.host.name)}" aria-pressed="${t.mode === "files"}" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>` : ""}
+    <button role="tab" aria-selected="${front(t)}" class="tab ${front(t) ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${tabState(t)}" title="${esc(t.host.addr)}">
+      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${closer(t)}
+    </button>`).join("") + pages.map((p) => `
+    <button role="tab" aria-selected="${p === activePage}" class="tab ptab ${p === activePage ? "active" : ""}" data-page="${p.kind}" title="${p.title}">
+      ${PAGE_ICONS[p.kind]}<span class="name">${p.title}</span><span class="tab-files tab-x" role="button" tabindex="0" data-pageclose="${p.kind}" aria-label="Close ${p.title}" title="Close tab (hold Shift)">${X_ICON}</span>
     </button>`).join("");
   el.querySelector(".tab.active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
-  $("empty").hidden = tabs.length > 0;
+  $("empty").hidden = tabs.length > 0 || !!activePage;
 }
 
 const tabOf = (e: Event) => (e.target as HTMLElement).closest<HTMLElement>("[data-tab]");
@@ -291,11 +311,11 @@ function setMode(tab: Tab, mode: Tab["mode"]) {
 }
 
 function fitTab(t: Tab) { for (const p of panesOf(t)) p.fit.fit(); }
-function fitActive() { if (active && active.mode !== "files") fitTab(active); }
+function fitActive() { if (active && !activePage && active.mode !== "files") fitTab(active); }
 
 function applyMode() {
   for (const t of tabs) {
-    const showing = t === active;
+    const showing = t === active && !activePage;
     const files = showing && t.mode === "files";
     t.layout.hidden = !showing || files;
     for (const p of panesOf(t)) p.el.hidden = paneHidden(p);
@@ -305,10 +325,11 @@ function applyMode() {
       t.files.show();
     } else t.files.hide();
   }
-  const t = active;
+  for (const pg of pages) pg.el.hidden = pg !== activePage;
+  const t = shown();
   syncLayoutUi();
   if (!t) return;
-  requestAnimationFrame(() => { if (t.mode === "files") return; fitTab(t); t.focus.term.focus(); });
+  requestAnimationFrame(() => { if (t.mode === "files" || activePage) return; fitTab(t); t.focus.term.focus(); });
 }
 
 function leaveFilesIfGone(t: Tab) {
@@ -316,18 +337,34 @@ function leaveFilesIfGone(t: Tab) {
 }
 
 function onTabActivate(e: Event) {
-  const files = (e.target as HTMLElement).closest<HTMLElement>("[data-files]");
-  const tab = tabs.find((x) => x.key === (files?.dataset.files ?? tabOf(e)?.dataset.tab));
-  if (!tab) return;
-  if (files) {
+  const hit = (sel: string) => (e.target as HTMLElement).closest<HTMLElement>(sel);
+  const pageClose = hit("[data-pageclose]");
+  const pageTab = hit("[data-page]");
+  if (pageClose || pageTab) {
+    const page = pages.find((x) => x.kind === (pageClose?.dataset.pageclose ?? pageTab?.dataset.page));
+    if (!page) return;
     e.stopPropagation();
     e.preventDefault();
-    setMode(tab, tab.mode === "files" ? "term" : "files");
+    return pageClose ? closePage(page) : openPage(page.kind);
+  }
+  const files = hit("[data-files]");
+  const closer = hit("[data-tabclose]");
+  const tab = tabs.find((x) => x.key === (files?.dataset.files ?? closer?.dataset.tabclose ?? tabOf(e)?.dataset.tab));
+  if (!tab) return;
+  if (closer) {
+    e.stopPropagation();
+    e.preventDefault();
+    closeTab(tab);
+  } else if (files) {
+    e.stopPropagation();
+    e.preventDefault();
+    if ((e as MouseEvent | KeyboardEvent).shiftKey) closeTab(tab);
+    else setMode(tab, tab.mode === "files" ? "term" : "files");
   } else activate(tab);
 }
 $("tab-scroll").addEventListener("click", onTabActivate);
 $("tab-scroll").addEventListener("keydown", (e) => {
-  if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).closest("[data-files]")) onTabActivate(e);
+  if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).closest("[data-files],[data-tabclose],[data-pageclose]")) onTabActivate(e);
 });
 $("tab-scroll").addEventListener("dragstart", (e) => {
   const el = tabOf(e);
@@ -362,6 +399,8 @@ $("tab-scroll").addEventListener("dragend", () => {
 });
 $("tab-scroll").addEventListener("auxclick", (e) => {
   if (e.button !== 1) return;
+  const page = pages.find((x) => x.kind === (e.target as HTMLElement).closest<HTMLElement>("[data-page]")?.dataset.page);
+  if (page) return closePage(page);
   const tab = tabs.find((x) => x.key === (e.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab);
   if (tab) closeTab(tab);
 });
@@ -425,7 +464,7 @@ function makePane(tab: Tab, host: Host): Pane {
 
   const pane: Pane = {
     id: `${tab.key}.${++paneSeq}`, tab, host, term, fit, el, opened: false, state: "connecting",
-    ro: new ResizeObserver(() => { if (pane.tab === active && pane.tab.mode === "term") fit.fit(); }),
+    ro: new ResizeObserver(() => { if (pane.tab === active && !activePage && pane.tab.mode === "term") fit.fit(); }),
   };
 
   term.attachCustomKeyEventHandler((e) => handleTermKey(e, pane));
@@ -506,7 +545,7 @@ function relayout(t: Tab) {
   markFocus(t);
   syncLayoutUi();
   syncUrl();
-  if (t === active && t.mode === "term") requestAnimationFrame(() => fitTab(t));
+  if (t === active && !activePage && t.mode === "term") requestAnimationFrame(() => fitTab(t));
 }
 
 function resetSizes() {
@@ -654,7 +693,7 @@ layoutPop.addEventListener("click", (e) => {
 });
 
 function syncLayoutUi() {
-  const t = active;
+  const t = shown();
   const files = !t || t.mode === "files";
   const n = t && !files ? panesOf(t).length : 0;
   layoutBtn.disabled = files;
@@ -949,6 +988,7 @@ function renderAll() {
 }
 
 function activate(tab: Tab) {
+  activePage = undefined;
   active = tab;
   renderAll();
   applyMode();
@@ -963,7 +1003,7 @@ function closeTab(tab: Tab) {
   syncUrl();
   if (active === tab) {
     active = tabs[Math.min(i, tabs.length - 1)];
-    if (active) return activate(active);
+    if (active && !activePage) return activate(active);
   }
   renderAll();
 }
@@ -1027,12 +1067,23 @@ $("signout-others").onclick = async () => {
 
 function renderDrawer() {
   const tab = active;
+  const row = (k: string, v: string) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
+  if (activePage) {
+    const audit = activePage.kind === "audit";
+    $("close-session").hidden = false;
+    $("close-session").textContent = audit ? "Close audit log" : "Close account";
+    $("kv").innerHTML = audit
+      ? row("View", "Audit log") + row("Access", "Admins only")
+      : row("View", "Account") + row("User", scope) + row("Signed in", $("acct-via").textContent ?? "");
+    if (signinsKey !== "page") { signinsKey = "page"; loadSignins(); }
+    return;
+  }
+  $("close-session").textContent = "Close session";
   const t = tab?.focus;
   $("close-session").hidden = !tab;
   const key = `${t?.host.id ?? ""}|${t?.state ?? ""}`;
   if (key !== signinsKey) { signinsKey = key; loadSignins(t?.host.id); }
   const i = t?.info;
-  const row = (k: string, v: string) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
   $("kv").innerHTML = !tab || !t ? `<dt>—</dt><dd>No session</dd>` :
     row("Host", i?.host ?? t.host.addr) + row("User", i?.user ?? t.host.addr.split("@")[0]) +
     row("Auth", i?.auth ?? "—") + row("Cipher", i?.cipher || "—") + row("Host key", i?.hostKey ?? "—") +
@@ -1093,8 +1144,8 @@ function runShortcut(e: KeyboardEvent, primary: boolean): boolean {
   if (e.altKey && e.shiftKey && e.code === "KeyL") lock?.lock();
   else if (primary && k === "b") toggleRail();
   else if (primary && k === "k") focusSearch();
-  else if (e.altKey && e.shiftKey && e.code === "KeyD") { if (active) addSession(active.focus.host); }
-  else if (e.altKey && e.shiftKey && e.code === "KeyW") { if (active && active.mode === "term") closePane(active.focus); }
+  else if (e.altKey && e.shiftKey && e.code === "KeyD") { const t = shown(); if (t) addSession(t.focus.host); }
+  else if (e.altKey && e.shiftKey && e.code === "KeyW") { const t = shown(); if (t && t.mode === "term") closePane(t.focus); }
   else if (e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) cyclePane(e.key === "ArrowRight" ? 1 : -1);
   else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) cycle(e.key === "ArrowRight" ? 1 : -1);
   else return false;
@@ -1108,8 +1159,12 @@ function focusSearch() {
 }
 
 function cycle(dir: number) {
-  if (!tabs.length || !active) return;
-  activate(tabs[(tabs.indexOf(active) + dir + tabs.length) % tabs.length]);
+  const order: (Tab | Page)[] = [...tabs, ...pages];
+  if (!order.length) return;
+  const cur = activePage ?? active;
+  const next = order[((cur ? order.indexOf(cur) : -1) + dir + order.length) % order.length];
+  if ("kind" in next) openPage(next.kind);
+  else activate(next);
 }
 
 document.addEventListener("keydown", (e) => {
@@ -1122,7 +1177,6 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 const accountBtn = $("account-btn");
-const acct = $<HTMLDialogElement>("acct");
 const scrim = $("signout-scrim");
 const addrToggle = $("addr-toggle");
 
@@ -1156,12 +1210,38 @@ $("zoom-reset").onclick = () => setZoom(100);
 
 addrToggle.onclick = () => setHideAddr(addrToggle.getAttribute("aria-checked") !== "true");
 
-accountBtn.onclick = () => acct.showModal();
-$("acct-x").onclick = () => acct.close();
-$("acct-close").onclick = () => acct.close();
-acct.addEventListener("click", (e) => {
-  if (e.target === acct) acct.close();
-});
+const auditView = initAudit($("page-audit"));
+
+function openPage(kind: PageKind) {
+  let p = pages.find((x) => x.kind === kind);
+  if (!p) {
+    p = { kind, title: kind === "audit" ? "Audit log" : "Account", el: $(`page-${kind}`) };
+    pages.push(p);
+  }
+  $("ws").classList.remove("rail-open");
+  activePage = p;
+  if (kind === "audit") auditView.show();
+  renderAll();
+  applyMode();
+}
+
+function closePage(p: Page) {
+  const i = pages.indexOf(p);
+  if (i < 0) return;
+  pages.splice(i, 1);
+  p.el.hidden = true;
+  if (activePage === p) activePage = pages[i] ?? pages[i - 1];
+  renderAll();
+  applyMode();
+  shown()?.focus.term.focus();
+}
+
+accountBtn.onclick = () => openPage("account");
+$("acct-close").onclick = () => {
+  const p = pages.find((x) => x.kind === "account");
+  if (p) closePage(p);
+};
+$("acct-audit").onclick = () => openPage("audit");
 
 function openSignOutDialog() {
   scrim.hidden = false;
@@ -1174,10 +1254,7 @@ function closeSignOutDialog() {
   accountBtn.focus();
 }
 
-$("acct-signout").onclick = () => {
-  acct.close();
-  openSignOutDialog();
-};
+$("acct-signout").onclick = openSignOutDialog;
 $("signout-cancel").onclick = closeSignOutDialog;
 scrim.addEventListener("pointerdown", (e) => {
   if (e.target === scrim) closeSignOutDialog();
@@ -1256,10 +1333,7 @@ function closeSealDialog() {
   accountBtn.focus();
 }
 
-$("acct-seal").onclick = () => {
-  acct.close();
-  openSealDialog();
-};
+$("acct-seal").onclick = openSealDialog;
 $("seal-cancel").onclick = closeSealDialog;
 sealScrim.addEventListener("pointerdown", (e) => {
   if (e.target === sealScrim) closeSealDialog();
@@ -1331,6 +1405,7 @@ function renderMe(me: Me) {
   $("acct-via").textContent = me.via === "passkey" ? "Signed in with a passkey" : "Signed in with GitHub";
   passkeys.enable(!!me.canManagePasskeys);
   $("acct-seal-sec").hidden = !me.sealable;
+  $("acct-audit-sec").hidden = !me.admin;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;
   canEdit = !!me.canAddHosts;
@@ -1344,20 +1419,19 @@ const passkeys = initPasskeys({
   list: $("pk-list"),
   addButton: $<HTMLButtonElement>("pk-add"),
   scrim: $("pk-scrim"),
-  reopenAccount: () => acct.showModal(),
-  closeAccount: () => acct.close(),
+  reopenAccount: () => {},
+  closeAccount: () => {},
 });
 
 lock = initLock({
   sessions: () => tabs.flatMap((t) => panesOf(t)).map((p) => ({ name: p.host.name, state: p.state })),
   beforeLock: () => {
     setLayoutOpen(false);
-    if (acct.open) acct.close();
     closeSignOutDialog();
   },
   afterUnlock: () => {
     requestAnimationFrame(fitActive);
-    if (active && active.mode === "term") active.focus.term.focus();
+    const t = shown(); if (t && t.mode === "term") t.focus.term.focus();
   },
   signOut,
   leave,
@@ -1381,8 +1455,14 @@ $("hosts").addEventListener("click", (e) => {
 });
 
 $("close-session").onclick = () => {
-  if (active) closeTab(active);
+  if (activePage) closePage(activePage);
+  else if (active) closeTab(active);
 };
+
+const setShift = (on: boolean) => document.body.classList.toggle("shift-held", on);
+document.addEventListener("keydown", (e) => { if (e.key === "Shift") setShift(true); });
+document.addEventListener("keyup", (e) => { if (e.key === "Shift") setShift(false); });
+window.addEventListener("blur", () => setShift(false));
 
 (async () => {
   try {
