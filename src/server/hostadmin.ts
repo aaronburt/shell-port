@@ -55,7 +55,7 @@ function refFile(h: HostConfig): string | undefined {
   return typeof p === "object" && p !== null && "file" in p ? p.file : undefined;
 }
 
-interface StoreIo {
+export interface StoreIo {
   read(): { hosts?: HostConfig[] } & Record<string, unknown>;
   write(raw: unknown): void;
 }
@@ -122,24 +122,32 @@ function makeStore(kind: "file" | "vault", where: string, dir: string, io: Store
   };
 }
 
-export function fileStore(configPath: string): HostStore {
+export function fileIo(configPath: string): StoreIo {
   const resolved = path.resolve(configPath);
-  return makeStore("file", configPath, path.dirname(resolved), {
+  return {
     read: () => JSON.parse(fs.readFileSync(resolved, "utf8")),
     write: (raw) => writeFileAtomic(resolved, JSON.stringify(raw, null, 2) + "\n", fs.statSync(resolved).mode & 0o777),
-  });
+  };
 }
 
-export function vaultStore(vaultPath: string, dek: Buffer): HostStore {
+export function vaultIo(vaultPath: string, dek: Buffer): StoreIo {
   const resolved = path.resolve(vaultPath);
   let current: Buffer;
-  return makeStore("vault", "the vault", path.dirname(resolved), {
+  return {
     read: () => {
       current = fs.readFileSync(resolved);
       return JSON.parse(openVaultWithKey(current, dek).toString("utf8"));
     },
     write: (raw) => writeFileAtomic(resolved, replaceVaultBody(current, dek, JSON.stringify(raw, null, 2))),
-  });
+  };
+}
+
+export function fileStore(configPath: string): HostStore {
+  return makeStore("file", configPath, path.dirname(path.resolve(configPath)), fileIo(configPath));
+}
+
+export function vaultStore(vaultPath: string, dek: Buffer): HostStore {
+  return makeStore("vault", "the vault", path.dirname(path.resolve(vaultPath)), vaultIo(vaultPath, dek));
 }
 
 export function probeHostKey(host: string, port: number, timeoutMs = 8000): Promise<string> {

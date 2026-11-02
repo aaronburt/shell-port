@@ -7,6 +7,7 @@ export interface UserSession {
   name: string;
   avatarUrl?: string;
   stage: "totp" | "full";
+  method: "github" | "passkey";
   totpFailures: number;
   createdAt: number;
   expiresAt: number;
@@ -22,12 +23,13 @@ export class SessionStore {
     setInterval(() => this.sweep(), 60_000).unref();
   }
 
-  create(user: { githubId: number; login: string; name: string; avatarUrl?: string }, stage: UserSession["stage"]): UserSession {
+  create(user: { githubId: number; login: string; name: string; avatarUrl?: string }, stage: UserSession["stage"], method: UserSession["method"] = "github"): UserSession {
     const now = Date.now();
     const s: UserSession = {
       id: crypto.randomBytes(32).toString("base64url"),
       ...user,
       stage,
+      method,
       totpFailures: 0,
       createdAt: now,
       expiresAt: now + (stage === "full" ? this.ttlMs : PENDING_TTL_MS),

@@ -6,7 +6,8 @@ import { createSetupApp } from "./setup.js";
 import { createUnsealApp } from "./unseal.js";
 import { decideBoot } from "./boot.js";
 import { socketPathFor } from "./vaultops.js";
-import { fileStore, vaultStore, type HostStore } from "./hostadmin.js";
+import { fileIo, fileStore, vaultIo, vaultStore, type HostStore } from "./hostadmin.js";
+import { passkeyStore } from "./passkeys.js";
 import { createMigrateApp } from "./migrate.js";
 import crypto from "node:crypto";
 import { audit } from "./log.js";
@@ -24,6 +25,7 @@ function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer) {
   const { server, shutdown } = createApp(cfg, {
     publicDir,
     hostStore,
+    passkeyStore: vault ? (dek ? passkeyStore("vault", vaultIo(vault, dek)) : undefined) : passkeyStore("file", fileIo(configPath)),
     onSeal: vault
       ? () => {
           if (sealing) return;

@@ -135,7 +135,7 @@ Shellport reads `config.json`. Start from [`config.example.json`](config.example
 | --- | --- |
 | `server` | Port, listen address, `publicUrl` (the origin used for OAuth redirects and WebSocket checks) and `trustProxy`. |
 | `github` | OAuth app `clientId` and `clientSecret`. |
-| `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. Set `"admin": true` on a user to let them add hosts from the browser. |
+| `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. Set `"admin": true` on a user to let them add hosts from the browser. A `passkeys` list is written by Shellport when a user adds a passkey under Account; do not edit it by hand. |
 | `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints`, optional `allowedUsers`, and `files` (set it to `false` to turn off the file explorer for that host; it is on by default). |
 | `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, and `maxDownloadMB` (largest file the explorer will download, default 256). |
 | `session` | How long a sign-in lasts (`ttlHours`). |
@@ -241,3 +241,9 @@ Shellport gives a signed-in user a shell on the hosts they are allowed to reach,
 ## License
 
 [AGPL-3.0](LICENSE)
+
+## Passkeys
+
+Once signed in, open Account and choose "Add a passkey". The next time, "Sign in with a passkey" on the sign-in page logs you in with your device's fingerprint, face or PIN, without GitHub or an authenticator code. GitHub and TOTP keep working as the other way in. Only existing users on the allowlist can add one, and only for their own account.
+
+Passkeys belong to the host name in `server.publicUrl` and need HTTPS (or `localhost`). They are saved in `config.json`, or in the vault when sealed, so the folder must be writable: with the default compose file's read-only config mount, adding a passkey is refused. Up to 10 passkeys per user.

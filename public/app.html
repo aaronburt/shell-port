@@ -63,7 +63,7 @@
   <div class="acct-body">
     <header class="acct-head">
       <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
-      <div><h3 id="acct-title"></h3><small>Signed in with GitHub</small></div>
+      <div><h3 id="acct-title"></h3><small id="acct-via">Signed in with GitHub</small></div>
       <button class="tool acct-x" id="acct-x" type="button" aria-label="Close account">×</button>
     </header>
     <section class="acct-sec">
@@ -80,6 +80,12 @@
           <button class="tool" id="zoom-in" type="button" aria-label="Zoom in">+</button>
         </div>
       </div>
+    </section>
+    <section class="acct-sec" id="acct-pk-sec" hidden>
+      <h5>Passkeys</h5>
+      <p class="fine pk-intro">A passkey lets you sign in from the sign-in page without GitHub or an authenticator code. Your device checks it is really you (fingerprint, face or PIN) before it signs.</p>
+      <ul class="pk-list" id="pk-list"></ul>
+      <div class="pk-foot"><p class="fine">You can only add a passkey while signed in. Your GitHub account must stay on this server's allowlist.</p><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
     </section>
     <section class="acct-sec" id="acct-seal-sec" hidden>
       <h5>Server</h5>
@@ -120,6 +126,7 @@
   </div>
 </div>
 <div class="scrim" id="host-scrim" hidden></div>
+<div class="scrim" id="pk-scrim" hidden></div>
 <script src="/assets/app.js"></script>
 </body>
 </html>

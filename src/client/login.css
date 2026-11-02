@@ -14,3 +14,8 @@ body { display: flex; flex-direction: column; }
 .gate-box input { background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 12px; font: 500 22px var(--f-mono); letter-spacing: .3em; text-align: center; color: var(--fg); width: 100%; }
 .gate-box .btn { cursor: pointer; }
 .gate-note a { color: var(--accent); text-decoration: none; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.pk-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
+.pk-btn svg { width: 18px; height: 18px; }
+.btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); font-weight: 500; }

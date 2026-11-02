@@ -4,7 +4,9 @@ import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { WebSocketServer } from "ws";
 import { parseCookie, stringifySetCookie } from "cookie";
-import { findUser, hostsForUser, isAdmin, type LoadedConfig } from "./config.js";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
+import { findUser, hostsForUser, isAdmin, userAllowed, type LoadedConfig } from "./config.js";
+import { ChallengeBook, findPasskey, MAX_PASSKEYS_PER_USER, PasskeyError, rpIdFor, userHandle, type PasskeyStore } from "./passkeys.js";
 import { addHost, describeHost, HostAdminError, listKeys, removeHost, updateHost, type HostStore, type KeyProbe } from "./hostadmin.js";
 import { verifyTotp } from "./totp.js";
 import { SessionStore, RateLimiter, type UserSession } from "./sessions.js";
@@ -16,8 +18,8 @@ import * as files from "./sftp.js";
 
 const PERMISSIONS_POLICY = [
   "accelerometer", "autoplay", "bluetooth", "camera", "display-capture", "geolocation", "gyroscope",
-  "hid", "magnetometer", "microphone", "midi", "payment", "publickey-credentials-get", "serial", "usb", "xr-spatial-tracking",
-].map((f) => `${f}=()`).join(", ");
+  "hid", "magnetometer", "microphone", "midi", "payment", "serial", "usb", "xr-spatial-tracking",
+].map((f) => `${f}=()`).concat(["publickey-credentials-get=(self)", "publickey-credentials-create=(self)"]).join(", ");
 
 export function clientIp(remote: string, xff: string | undefined, trustProxy: boolean | number): string {
   if (!trustProxy || !xff) return remote;
@@ -33,6 +35,7 @@ export interface AppOptions {
   onSeal?: () => void;
   hostStore?: HostStore;
   probeHostKey?: KeyProbe;
+  passkeyStore?: PasskeyStore;
 }
 
 export function createApp(cfg: LoadedConfig, opts: AppOptions) {
@@ -67,6 +70,10 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     const s = anySession(cookieHeader);
     return s?.stage === "full" ? s : undefined;
   };
+  const rpId = rpIdFor(cfg.server.publicUrl);
+  const registrations = new ChallengeBook();
+  const logins = new ChallengeBook();
+  const passkeyLimiter = new RateLimiter(cfg.limits.loginAttemptsPer15Min, 15 * 60_000);
   const totpLimiter = new RateLimiter(cfg.limits.loginAttemptsPer15Min, 15 * 60_000);
   const lastTotpCounter = new Map<number, number>();
   const MAX_TOTP_FAILURES = 5;
@@ -202,6 +209,61 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.status(204).end();
   });
 
+  app.post("/auth/passkey/options", requireSameOrigin, async (req, res) => {
+    if (!loginLimiter.hit(ipOf(req))) return res.status(429).json({ error: "rate_limited" });
+    const options = await generateAuthenticationOptions({ rpID: rpId, userVerification: "required", timeout: 120_000 });
+    res.json({ challengeId: logins.put(options.challenge), options });
+  });
+
+  app.post("/auth/passkey/verify", requireSameOrigin, express.json({ limit: "16kb" }), async (req, res) => {
+    const ip = ipOf(req);
+    if (!loginLimiter.hit(ip)) return res.status(429).json({ error: "rate_limited" });
+    const fail = (reason: string, extra: Record<string, unknown> = {}) => {
+      audit("login.passkey_failed", { ip, reason, ...extra });
+      res.status(401).json({ error: "passkey_failed" });
+    };
+    const challenge = logins.take(req.body?.challengeId);
+    const response = req.body?.response;
+    if (!challenge || !response || typeof response !== "object" || typeof response.id !== "string") return fail("bad_request");
+    const found = findPasskey(cfg, response.id);
+    if (!found) return fail("unknown_credential");
+    const { user, passkey } = found;
+    if (!userAllowed([user.match], { login: passkey.login, id: passkey.githubId })) return fail("owner_mismatch", { user: passkey.login });
+    let verified;
+    try {
+      verified = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: challenge,
+        expectedOrigin: cfg.server.publicUrl,
+        expectedRPID: rpId,
+        requireUserVerification: true,
+        credential: {
+          id: passkey.id,
+          publicKey: new Uint8Array(Buffer.from(passkey.publicKey, "base64url")),
+          counter: passkey.counter,
+          transports: passkey.transports as never,
+        },
+      });
+    } catch (e) {
+      return fail("verification", { user: passkey.login, error: (e as Error).message });
+    }
+    if (!verified.verified) return fail("not_verified", { user: passkey.login });
+    passkey.counter = verified.authenticationInfo.newCounter;
+    passkey.lastUsedAt = Date.now();
+    try { opts.passkeyStore?.save(user.match, user.passkeys); } catch {}
+    const stale = cookieValue(req.headers.cookie, SID);
+    if (stale) sessions.destroy(stale);
+    const s = sessions.create(
+      { githubId: passkey.githubId, login: passkey.login, name: passkey.displayName ?? passkey.login, avatarUrl: passkey.avatarUrl },
+      "full",
+      "passkey",
+    );
+    audit("login.ok", { ip, user: s.login, githubId: s.githubId, method: "passkey", passkey: passkey.name });
+    activity.add({ kind: "signin", githubId: s.githubId, ip, sid: sidTag(s.id), method: "passkey" });
+    res.setHeader("Set-Cookie", serializeCookie(SID, s.id, cookieOpts(cfg.session.ttlHours * 3600)));
+    res.status(204).end();
+  });
+
   app.post("/auth/logout", requireSameOrigin, (req, res) => {
     const s = anySession(req.headers.cookie);
     if (s) {
@@ -214,7 +276,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.get("/api/me", requireSession, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)) });
+    res.json({ via: s.method, canManagePasskeys: !!opts.passkeyStore, login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)) });
   });
 
   if (opts.onSeal) {
@@ -225,6 +287,108 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       res.status(204).end();
     });
   }
+
+  const passkeyRoute = (action: string, fn: (a: { req: Request; res: Response; s: UserSession; store: PasskeyStore; user: NonNullable<ReturnType<typeof findUser>> }) => Promise<void> | void) =>
+    async (req: Request, res: Response) => {
+      const s: UserSession = res.locals.session;
+      if (!opts.passkeyStore) return res.status(409).json({ error: "storage_unavailable", message: "Passkeys cannot be saved on this server." });
+      if (!passkeyLimiter.hit(String(s.githubId))) return res.status(429).json({ error: "rate_limited" });
+      const user = findUser(cfg, who(s));
+      if (!user) return res.status(403).json({ error: "forbidden" });
+      try {
+        await fn({ req, res, s, store: opts.passkeyStore, user });
+      } catch (e) {
+        if (!(e instanceof PasskeyError)) throw e;
+        audit(`passkey.${action}_failed`, { ip: ipOf(req), user: s.login, githubId: s.githubId, error: e.code });
+        res.status(e.status).json({ error: e.code, message: e.message });
+      }
+    };
+
+  const publicPasskey = (p: { id: string; name: string; createdAt: number; lastUsedAt?: number }) => ({ id: p.id, name: p.name, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt ?? null });
+
+  app.get("/api/passkeys", requireSession, (_req, res) => {
+    const s: UserSession = res.locals.session;
+    res.json((findUser(cfg, who(s))?.passkeys ?? []).map(publicPasskey));
+  });
+
+  app.post("/api/passkeys/register/options", requireSession, requireSameOrigin, passkeyRoute("register", async ({ res, s, user }) => {
+    if (user.passkeys.length >= MAX_PASSKEYS_PER_USER) throw new PasskeyError(409, "too_many", `You can have up to ${MAX_PASSKEYS_PER_USER} passkeys. Remove one first.`);
+    const options = await generateRegistrationOptions({
+      rpName: "Shellport",
+      rpID: rpId,
+      userName: s.login,
+      userDisplayName: s.name || s.login,
+      userID: new Uint8Array(userHandle(user)),
+      attestationType: "none",
+      excludeCredentials: user.passkeys.map((p) => ({ id: p.id, transports: p.transports as never })),
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      timeout: 120_000,
+    });
+    registrations.put(options.challenge, s.id);
+    res.json(options);
+  }));
+
+  app.post("/api/passkeys/register/verify", requireSession, requireSameOrigin, express.json({ limit: "16kb" }), passkeyRoute("register", async ({ req, res, s, store, user }) => {
+    const challenge = registrations.take(s.id);
+    if (!challenge) throw new PasskeyError(400, "expired", "That request expired. Start again.");
+    const name = String(req.body?.name ?? "").replace(/[ -]/g, "").trim();
+    if (!name || name.length > 40) throw new PasskeyError(400, "invalid", "Give the passkey a name of up to 40 characters.");
+    if (user.passkeys.some((p) => p.name.toLowerCase() === name.toLowerCase())) throw new PasskeyError(409, "duplicate_name", "You already have a passkey with that name.");
+    if (user.passkeys.length >= MAX_PASSKEYS_PER_USER) throw new PasskeyError(409, "too_many", `You can have up to ${MAX_PASSKEYS_PER_USER} passkeys. Remove one first.`);
+    let info;
+    try {
+      const v = await verifyRegistrationResponse({
+        response: req.body?.response,
+        expectedChallenge: challenge,
+        expectedOrigin: cfg.server.publicUrl,
+        expectedRPID: rpId,
+        requireUserVerification: true,
+      });
+      if (!v.verified || !v.registrationInfo) throw new Error("not verified");
+      info = v.registrationInfo;
+    } catch (e) {
+      throw new PasskeyError(400, "verification_failed", "The passkey could not be verified. Try again.");
+    }
+    if (findPasskey(cfg, info.credential.id)) throw new PasskeyError(409, "duplicate", "That passkey is already registered.");
+    const record = {
+      id: info.credential.id,
+      publicKey: Buffer.from(info.credential.publicKey).toString("base64url"),
+      counter: info.credential.counter,
+      transports: info.credential.transports as string[] | undefined,
+      name,
+      createdAt: Date.now(),
+      githubId: s.githubId,
+      login: s.login,
+      displayName: s.name,
+      avatarUrl: s.avatarUrl,
+    };
+    const before = user.passkeys;
+    user.passkeys = [...before, record];
+    try {
+      store.save(user.match, user.passkeys);
+    } catch (e) {
+      user.passkeys = before;
+      throw e;
+    }
+    audit("passkey.add", { ip: ipOf(req), user: s.login, githubId: s.githubId, name, store: store.kind });
+    res.status(201).json(publicPasskey(record));
+  }));
+
+  app.delete("/api/passkeys/:id", requireSession, requireSameOrigin, passkeyRoute("remove", ({ req, res, s, store, user }) => {
+    const id = String(req.params.id);
+    const target = user.passkeys.find((p) => p.id === id);
+    if (!target) throw new PasskeyError(404, "not_found", "That passkey no longer exists.");
+    const before = user.passkeys;
+    user.passkeys = before.filter((p) => p !== target);
+    try {
+      store.save(user.match, user.passkeys);
+    } catch (e) {
+      user.passkeys = before;
+      throw e;
+    }
+    audit("passkey.remove", { ip: ipOf(req), user: s.login, githubId: s.githubId, name: target.name, store: store.kind });
+    res.status(204).end();
+  }));
 
   app.get("/api/signins", requireSession, (req, res) => {
     const s: UserSession = res.locals.session;
@@ -237,7 +401,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
         const base = { id: a.id, kind: a.kind, ip: a.ip, at: a.at };
         if (a.kind !== "signin") return base;
         const l = live.get(a.sid ?? "");
-        return { ...base, session: a.sid, current: a.sid === mine, active: !!l, expiresAt: l?.expiresAt };
+        return { ...base, method: a.method ?? "github", session: a.sid, current: a.sid === mine, active: !!l, expiresAt: l?.expiresAt };
       });
     res.json({ items, others: [...live.keys()].filter((k) => k !== mine).length });
   });
