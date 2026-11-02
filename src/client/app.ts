@@ -51,6 +51,7 @@ interface Tab {
   solo?: boolean;
   stash: HTMLDivElement;
   wantPath?: string;
+  arr?: Arrangement;
 }
 
 type Zone = "left" | "right" | "top" | "bottom";
@@ -243,12 +244,18 @@ let dragKey: string | undefined;
 
 const canBrowse = (t: Tab) => { const p = filesPane(t); return !!p && p.info?.files !== false; };
 
+const ARRANGEMENTS: Arrangement[] = ["single", "cols", "rows", "grid", "main"];
+
 function syncUrl() {
   const q = new URLSearchParams();
   for (const t of tabs) {
+    const ps = panesOf(t);
     const p = t.mode === "files" ? t.files.cwd : t.wantPath;
-    const id = t.mode === "files" ? (filesPane(t)?.host ?? t.host).id : t.host.id;
-    q.append("open", p ? `${id}:${p}` : id);
+    const lead = t.mode === "files" ? filesPane(t) : undefined;
+    const ids = ps.map((x) => x.host.id);
+    if (lead) ids.splice(ids.indexOf(lead.host.id), 1), ids.unshift(lead.host.id);
+    const arr = ps.length > 1 ? (t.solo ? "single" : t.arr) : undefined;
+    q.append("open", `${arr ? `${arr}!` : ""}${ids.join(",")}${p ? `:${p}` : ""}`);
   }
   const s = q.toString();
   try { history.replaceState(null, "", location.pathname + (s ? `?${s}` : "")); } catch {}
@@ -256,13 +263,18 @@ function syncUrl() {
 
 function openFromUrl() {
   for (const v of new URLSearchParams(location.search).getAll("open")) {
-    const i = v.indexOf(":");
-    const id = i < 0 ? v : v.slice(0, i);
-    const path = i < 0 ? "" : v.slice(i + 1);
-    const h = hosts.find((x) => x.id === id);
-    if (!h) continue;
-    openTab(h);
-    if (path.startsWith("/")) tabs[tabs.length - 1].wantPath = path;
+    const c = v.indexOf(":");
+    const head = c < 0 ? v : v.slice(0, c);
+    const path = c < 0 ? "" : v.slice(c + 1);
+    const b = head.indexOf("!");
+    const arr = b < 0 ? "" : head.slice(0, b);
+    const list = (b < 0 ? head : head.slice(b + 1)).split(",").map((id) => hosts.find((x) => x.id === id)).filter((h): h is Host => !!h).slice(0, MAX_PANES);
+    if (!list.length) continue;
+    openTab(list[0]);
+    const t = tabs[tabs.length - 1];
+    if (path.startsWith("/")) t.wantPath = path;
+    for (const h of list.slice(1)) addSession(h);
+    if (ARRANGEMENTS.includes(arr as Arrangement) && list.length > 1) arrange(arr as Arrangement);
   }
   const first = tabs[0];
   if (first) activate(first);
@@ -492,6 +504,7 @@ function relayout(t: Tab) {
   }
   markFocus(t);
   syncLayoutUi();
+  syncUrl();
   if (t === active && t.mode === "term") requestAnimationFrame(() => fitTab(t));
 }
 
@@ -540,6 +553,7 @@ function addSession(h: Host, target?: Pane, zone?: Zone) {
   const pane = makePane(t, h);
   const z = ZONES[zone];
   t.solo = false;
+  t.arr = undefined;
   t.root = insertAt(t.root, anchor, z.dir, pane, z.before);
   t.focus = pane;
   relayout(t);
@@ -561,6 +575,7 @@ function arrange(kind: Arrangement) {
     t.solo = true;
   } else {
     t.solo = false;
+    t.arr = kind;
     const leaf = (pane: Pane): Node => ({ pane });
     const mk = (dir: Dir, kids: Node[], w?: number[]): Node => ({ id: ++nodeSeq, dir, kids, w: w ?? kids.map(() => 1) });
     if (kind === "cols") t.root = mk("row", ps.map(leaf));
@@ -753,6 +768,7 @@ $("terms").addEventListener("drop", (e) => {
   }
   t.focus = p;
   t.solo = false;
+  if (z !== "center") t.arr = undefined;
   relayout(t);
   renderAll();
   p.term.focus();
@@ -776,6 +792,7 @@ function closePane(p: Pane) {
   disposePane(p);
   const rest = panesOf(t);
   if (t.focus === p) t.focus = rest[Math.min(i, rest.length - 1)];
+  t.arr = undefined;
   relayout(t);
   leaveFilesIfGone(t);
   renderAll();
