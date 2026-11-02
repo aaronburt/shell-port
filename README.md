@@ -12,6 +12,7 @@ The screenshots show a local instance with demo hosts and a demo account. No rea
 - **Preconfigured hosts only.** Administrators define hosts, credentials and pinned host keys on the server. Users pick a host from the list. They can't add connections or see private keys.
 - **Passphrases typed in the browser.** If a key is passphrase-protected, the terminal asks for the passphrase when you connect. It is never stored or logged by the server. Optionally, **Account → SSH key passphrases → Passphrase auto enter** remembers each passphrase in this browser only (see [SECURITY.md](SECURITY.md)).
 - **Tabs and sessions.** Open several sessions to the same host, drag tabs to reorder them, and check your recent sign-ins in the session panel.
+- **Up to 8 sessions on one screen.** The Layout button in the tab bar opens a view of up to 8 sessions, on the same host or different ones. Drag a session's title bar onto the edge of another to dock it beside it, or onto the middle to swap places. Drag a host from the sidebar to open it next to any session, drag dividers to resize them, and use Single to show one session at a time.
 - **File explorer per tab.** The folder icon on an SSH tab switches that tab between the terminal and its files, over SFTP on the same connection. Browse, view small text files, download, and delete. It acts as the host's SSH user, so the host's own permissions apply. Upload is not supported yet.
 - **Works on a phone.** The host list and session panel open over the terminal on small screens.
 

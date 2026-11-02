@@ -20,6 +20,7 @@ interface Info { id?: string; files?: boolean; host: string; user: string; auth:
 interface Pane {
   id: string;
   tab: Tab;
+  host: Host;
   term: Terminal;
   fit: FitAddon;
   el: HTMLDivElement;
@@ -46,7 +47,19 @@ interface Tab {
   focus: Pane;
   mode: "term" | "files";
   files: FilesPane;
+  filesFor?: string;
+  solo?: boolean;
+  stash: HTMLDivElement;
 }
+
+type Zone = "left" | "right" | "top" | "bottom";
+const MAX_PANES = 8;
+const ZONES: Record<Zone, { dir: Dir; before: boolean; label: string }> = {
+  left: { dir: "row", before: true, label: "left of" },
+  right: { dir: "row", before: false, label: "right of" },
+  top: { dir: "col", before: true, label: "above" },
+  bottom: { dir: "col", before: false, label: "below" },
+};
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -83,17 +96,34 @@ function filesPane(t: Tab): Pane | undefined {
   return [t.focus, ...panesOf(t)].find((p) => p.state === "connected" && !!p.info?.id);
 }
 
-function splitNode(n: Node, target: Pane, dir: Dir, np: Pane): Node {
-  if ("pane" in n) return n.pane === target ? { id: ++nodeSeq, dir, kids: [n, { pane: np }], w: [1, 1] } : n;
+function insertAt(n: Node, target: Pane, dir: Dir, np: Pane, before: boolean): Node {
+  if ("pane" in n) return n.pane === target ? { id: ++nodeSeq, dir, kids: before ? [{ pane: np }, n] : [n, { pane: np }], w: [1, 1] } : n;
   const i = n.kids.findIndex((k) => "pane" in k && k.pane === target);
   if (i >= 0 && n.dir === dir) {
-    n.w[i] /= 2;
-    n.kids.splice(i + 1, 0, { pane: np });
-    n.w.splice(i + 1, 0, n.w[i]);
+    const half = n.w[i] / 2;
+    const at = before ? i : i + 1;
+    n.w[i] = half;
+    n.kids.splice(at, 0, { pane: np });
+    n.w.splice(at, 0, half);
     return n;
   }
-  n.kids = n.kids.map((k) => splitNode(k, target, dir, np));
+  n.kids = n.kids.map((k) => insertAt(k, target, dir, np, before));
   return n;
+}
+
+function swapLeaves(n: Node, a: Pane, b: Pane) {
+  if ("pane" in n) {
+    if (n.pane === a) n.pane = b;
+    else if (n.pane === b) n.pane = a;
+    return;
+  }
+  n.kids.forEach((k) => swapLeaves(k, a, b));
+}
+
+function equalize(n: Node) {
+  if ("pane" in n) return;
+  n.w = n.w.map(() => 1);
+  n.kids.forEach(equalize);
 }
 
 function dropPane(n: Node, target: Pane): Node | undefined {
@@ -124,11 +154,11 @@ function renderHosts() {
     if (f && !(h.name + " " + h.addr + " " + h.tag).toLowerCase().includes(f)) continue;
     groups.set(h.group, [...(groups.get(h.group) ?? []), h]);
   }
-  const live = new Set(tabs.filter((t) => tabState(t) !== "closed").map((t) => t.host.id));
+  const live = new Set(tabs.flatMap(panesOf).filter((p) => p.state !== "closed").map((p) => p.host.id));
   $("hosts").innerHTML = groups.size
     ? [...groups].map(([g, items]) => `<div class="group"><h4><span>${esc(g)}</span><span>${items.length}</span></h4>${items.map((h) => `
-        <div class="host-row">
-          <button class="host ${active?.host.id === h.id ? "active" : ""}" data-host="${esc(h.id)}">
+        <div class="host-row" draggable="true" data-drag-host="${esc(h.id)}">
+          <button class="host ${active?.focus.host.id === h.id ? "active" : ""}" data-host="${esc(h.id)}">
             <span class="dot ${live.has(h.id) ? "live" : ""}"></span>
             <span style="min-width:0"><span class="name">${esc(h.name)}</span><span class="addr">${esc(h.addr)}</span></span>
             ${h.tag ? `<span class="tag">${esc(h.tag)}</span>` : "<span></span>"}
@@ -147,9 +177,16 @@ $("hosts").addEventListener("click", (e) => {
   const h = hosts.find((x) => x.id === id);
   if (!h) return;
   $("ws").classList.remove("rail-open");
-  const existing = !n && tabs.find((x) => x.host.id === h.id);
-  existing ? activate(existing) : openTab(h);
+  const existing = n ? undefined : tabs.flatMap(panesOf).find((p) => p.host.id === h.id);
+  existing ? focusPane(existing) : openTab(h);
 });
+
+function focusPane(p: Pane) {
+  const t = p.tab;
+  t.focus = p;
+  if (t.solo) relayout(t);
+  activate(t);
+}
 
 $<HTMLInputElement>("host-search").addEventListener("input", renderHosts);
 $<HTMLInputElement>("host-search").addEventListener("keydown", (e) => {
@@ -188,15 +225,13 @@ function setDrawer(open: boolean, remember = true) {
 function toggleDrawer() {
   setDrawer($("drawer").classList.contains("closed"));
 }
-$("split-right").onclick = () => splitPane("row");
-$("split-down").onclick = () => splitPane("col");
 $("drawer-toggle").onclick = () => { toggleDrawer(); active?.focus.term.focus(); };
 
 function renderTabs() {
   const el = $("tab-scroll");
   el.innerHTML = tabs.map((t) => `
     <button role="tab" aria-selected="${t === active}" class="tab ${t === active ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${tabState(t)}" title="${esc(t.host.addr)}">
-      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${canBrowse(t) ? `<span class="tab-files ${t.mode === "files" ? "on" : ""}" role="button" tabindex="0" data-files="${t.key}" aria-label="Files on ${esc(t.host.name)}" aria-pressed="${t.mode === "files"}" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>` : ""}
+      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${canBrowse(t) ? `<span class="tab-files ${t.mode === "files" ? "on" : ""}" role="button" tabindex="0" data-files="${t.key}" aria-label="Files on ${esc(t.host.name)}" aria-pressed="${t.mode === "files"}" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>` : ""}
     </button>`).join("");
   el.querySelector(".tab.active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
   $("empty").hidden = tabs.length > 0;
@@ -222,13 +257,15 @@ function applyMode() {
     const showing = t === active;
     const files = showing && t.mode === "files";
     t.layout.hidden = !showing || files;
-    for (const p of panesOf(t)) p.el.hidden = t.layout.hidden;
-    if (files) t.files.show(); else t.files.hide();
+    for (const p of panesOf(t)) p.el.hidden = paneHidden(p);
+    if (files) {
+      const fid = filesPane(t)?.info?.id;
+      if (t.filesFor !== fid) { t.files.reset(); t.filesFor = fid; }
+      t.files.show();
+    } else t.files.hide();
   }
   const t = active;
-  const noSplit = !t || t.mode === "files";
-  $<HTMLButtonElement>("split-right").disabled = noSplit;
-  $<HTMLButtonElement>("split-down").disabled = noSplit;
+  syncLayoutUi();
   if (!t) return;
   requestAnimationFrame(() => { if (t.mode === "files") return; fitTab(t); t.focus.term.focus(); });
 }
@@ -302,11 +339,15 @@ function openTab(h: Host) {
   tab.files = new FilesPane({
     terminalId: () => filesPane(tab)?.info?.id,
     where: () => {
-      const i = filesPane(tab)?.info;
-      return `${i?.user ?? tab.host.addr.split("@")[0]}@${tab.host.addr.split("@").slice(1).join("@")}`;
+      const fp = filesPane(tab);
+      const host = fp?.host ?? tab.host;
+      return `${fp?.info?.user ?? host.addr.split("@")[0]}@${host.addr.split("@").slice(1).join("@")}`;
     },
   });
-  const pane = makePane(tab);
+  tab.stash = document.createElement("div");
+  tab.stash.className = "stash";
+  tab.stash.hidden = true;
+  const pane = makePane(tab, h);
   tab.root = { pane };
   tab.focus = pane;
   $("terms").appendChild(tab.files.el);
@@ -318,10 +359,12 @@ function openTab(h: Host) {
   connect(pane);
 }
 
-function makePane(tab: Tab): Pane {
+const GRIP = `<svg class="grip" viewBox="0 0 10 16" width="8" height="12" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.2"/><circle cx="8" cy="3" r="1.2"/><circle cx="2" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="2" cy="13" r="1.2"/><circle cx="8" cy="13" r="1.2"/></svg>`;
+
+function makePane(tab: Tab, host: Host): Pane {
   const el = document.createElement("div");
   el.className = "pane";
-  el.innerHTML = `<div class="xt"></div><button class="pane-x" type="button" aria-label="Close pane" title="Close pane (Alt Shift W)">×</button>`;
+  el.innerHTML = `<div class="pane-bar" draggable="true" title="Drag to dock or swap">${GRIP}<span class="dot"></span><span class="pname"></span><span class="paddr"></span><button class="pane-x" type="button" aria-label="Close session" title="Close session (Alt Shift W)">×</button></div><div class="xt"></div>`;
 
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
@@ -338,7 +381,7 @@ function makePane(tab: Tab): Pane {
   term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
 
   const pane: Pane = {
-    id: `${tab.key}.${++paneSeq}`, tab, term, fit, el, opened: false, state: "connecting",
+    id: `${tab.key}.${++paneSeq}`, tab, host, term, fit, el, opened: false, state: "connecting",
     ro: new ResizeObserver(() => { if (pane.tab === active && pane.tab.mode === "term") fit.fit(); }),
   };
 
@@ -363,8 +406,22 @@ function makePane(tab: Tab): Pane {
     if (pane.ws?.readyState === WebSocket.OPEN) pane.ws.send(JSON.stringify({ t: "resize", cols, rows }));
   });
   pane.ro.observe(el);
+  paintBar(pane);
   return pane;
 }
+
+function paintBar(p: Pane) {
+  const bar = p.el.querySelector<HTMLElement>(".pane-bar")!;
+  bar.querySelector(".dot")!.className = `dot ${p.state === "connected" ? "" : p.state}`;
+  bar.querySelector(".pname")!.textContent = p.host.name;
+  bar.querySelector(".paddr")!.textContent = p.host.addr;
+}
+
+function stashed(p: Pane) {
+  const t = p.tab;
+  return !!t.solo && t.focus !== p && panesOf(t).length > 1;
+}
+const paneHidden = (p: Pane) => p.tab.layout.hidden || stashed(p);
 
 function markFocus(t: Tab) {
   for (const p of panesOf(t)) p.el.classList.toggle("focus", p === t.focus);
@@ -381,6 +438,7 @@ function buildNode(n: Node): HTMLElement {
       g.setAttribute("role", "separator");
       g.setAttribute("aria-orientation", n.dir === "row" ? "vertical" : "horizontal");
       g.addEventListener("pointerdown", (e) => dragGutter(e, g, n, i));
+      g.addEventListener("dblclick", () => resetSizes());
       box.appendChild(g);
     }
     const cell = document.createElement("div");
@@ -393,15 +451,25 @@ function buildNode(n: Node): HTMLElement {
 }
 
 function relayout(t: Tab) {
-  t.layout.replaceChildren(buildNode(t.root));
   const ps = panesOf(t);
-  t.layout.classList.toggle("multi", ps.length > 1);
+  const solo = !!t.solo && ps.length > 1;
+  t.layout.replaceChildren(buildNode(solo ? { pane: t.focus } : t.root), t.stash);
+  t.stash.replaceChildren(...(solo ? ps.filter((p) => p !== t.focus).map((p) => p.el) : []));
+  t.layout.classList.toggle("multi", !solo && ps.length > 1);
   for (const p of ps) {
     if (!p.opened) { p.term.open(p.el.querySelector<HTMLElement>(".xt")!); p.opened = true; }
-    p.el.hidden = t.layout.hidden;
+    p.el.hidden = paneHidden(p);
   }
   markFocus(t);
+  syncLayoutUi();
   if (t === active && t.mode === "term") requestAnimationFrame(() => fitTab(t));
+}
+
+function resetSizes() {
+  const t = active;
+  if (!t) return;
+  equalize(t.root);
+  relayout(t);
 }
 
 function dragGutter(e: PointerEvent, g: HTMLElement, node: Extract<Node, { kids: Node[] }>, i: number) {
@@ -433,11 +501,16 @@ function dragGutter(e: PointerEvent, g: HTMLElement, node: Extract<Node, { kids:
   g.addEventListener("pointercancel", up);
 }
 
-function splitPane(dir: Dir) {
+function addSession(h: Host, target?: Pane, zone?: Zone) {
   const t = active;
   if (!t || t.mode === "files") return;
-  const pane = makePane(t);
-  t.root = splitNode(t.root, t.focus, dir, pane);
+  if (panesOf(t).length >= MAX_PANES) return notify(`A view holds up to ${MAX_PANES} sessions. Close one to open another.`);
+  const anchor = target ?? t.focus;
+  zone ??= anchor.el.clientWidth < anchor.el.clientHeight * 1.2 ? "bottom" : "right";
+  const pane = makePane(t, h);
+  const z = ZONES[zone];
+  t.solo = false;
+  t.root = insertAt(t.root, anchor, z.dir, pane, z.before);
   t.focus = pane;
   relayout(t);
   renderAll();
@@ -445,6 +518,215 @@ function splitPane(dir: Dir) {
   connect(pane);
   pane.term.focus();
 }
+
+type Arrangement = "single" | "cols" | "rows" | "grid" | "main";
+
+function arrange(kind: Arrangement) {
+  const t = active;
+  if (!t || t.mode === "files") return;
+  const ps = panesOf(t);
+  const n = ps.length;
+  if (n < 2) return;
+  if (kind === "single") {
+    t.solo = true;
+  } else {
+    t.solo = false;
+    const leaf = (pane: Pane): Node => ({ pane });
+    const mk = (dir: Dir, kids: Node[], w?: number[]): Node => ({ id: ++nodeSeq, dir, kids, w: w ?? kids.map(() => 1) });
+    if (kind === "cols") t.root = mk("row", ps.map(leaf));
+    else if (kind === "rows") t.root = mk("col", ps.map(leaf));
+    else if (kind === "main") t.root = n === 2 ? mk("row", ps.map(leaf)) : mk("row", [leaf(ps[0]), mk("col", ps.slice(1).map(leaf))], [3, 2]);
+    else {
+      const c = n <= 2 ? n : n <= 4 ? 2 : n <= 6 ? 3 : 4;
+      const rows: Node[] = [];
+      for (let i = 0; i < n; i += c) {
+        const chunk = ps.slice(i, i + c);
+        rows.push(chunk.length === 1 ? leaf(chunk[0]) : mk("row", chunk.map(leaf)));
+      }
+      t.root = rows.length === 1 ? rows[0] : mk("col", rows);
+    }
+  }
+  relayout(t);
+  renderAll();
+  t.focus.term.focus();
+}
+
+const ARR_THUMB: Record<Arrangement, string> = {
+  single: '<rect x="1" y="1" width="22" height="16" rx="1"/>',
+  cols: '<rect x="1" y="1" width="6" height="16" rx="1"/><rect x="9" y="1" width="6" height="16" rx="1"/><rect x="17" y="1" width="6" height="16" rx="1"/>',
+  rows: '<rect x="1" y="1" width="22" height="4" rx="1"/><rect x="1" y="7" width="22" height="4" rx="1"/><rect x="1" y="13" width="22" height="4" rx="1"/>',
+  grid: '<rect x="1" y="1" width="10" height="7" rx="1"/><rect x="13" y="1" width="10" height="7" rx="1"/><rect x="1" y="10" width="10" height="7" rx="1"/><rect x="13" y="10" width="10" height="7" rx="1"/>',
+  main: '<rect x="1" y="1" width="13" height="16" rx="1"/><rect x="16" y="1" width="7" height="7" rx="1"/><rect x="16" y="10" width="7" height="7" rx="1"/>',
+};
+const ARR_LABEL: Record<Arrangement, string> = { single: "Single", cols: "Columns", rows: "Rows", grid: "Grid", main: "Main" };
+
+const layoutPop = $("layout-pop");
+const layoutBtn = $<HTMLButtonElement>("layout-btn");
+
+function renderLayout() {
+  const t = active;
+  if (!t || t.mode === "files") return;
+  const n = panesOf(t).length;
+  const full = n >= MAX_PANES;
+  const solo = !!t.solo && n > 1;
+  const opt = (k: Arrangement) => `<button class="lay-opt" type="button" data-arrange="${k}" aria-pressed="${k === "single" && solo}" ${n < 2 ? "disabled" : ""}><svg viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">${ARR_THUMB[k]}</svg><span>${ARR_LABEL[k]}</span></button>`;
+  layoutPop.innerHTML = `
+    <div class="lay-head"><b>Layout</b><span class="mono">${n} of ${MAX_PANES} sessions</span></div>
+    <div class="lay-grid">${(["single", "cols", "rows", "grid", "main"] as Arrangement[]).map(opt).join("")}</div>
+    <button class="btn ghost" type="button" data-reset ${n < 2 ? "disabled" : ""}>Reset pane sizes</button>
+    <div class="lay-sec">Add a session</div>
+    <div class="lay-hosts">${hosts.length ? hosts.map((h) => `<button type="button" data-add="${esc(h.id)}" ${full ? "disabled" : ""}><span>${esc(h.name)}</span><span class="mono">${esc(h.tag)}</span></button>`).join("") : `<div class="none">No hosts.</div>`}</div>
+    <p class="fine">${full ? "This view is full. Close a session to add another. " : ""}Drag a title bar onto the edge of another pane to dock it there, or onto the middle to swap places. Drag a host from the sidebar to open it beside any pane. Drag a divider to resize, and double-click one to reset.</p>`;
+}
+
+function setLayoutOpen(open: boolean) {
+  if (open) renderLayout();
+  layoutPop.hidden = !open;
+  layoutBtn.setAttribute("aria-expanded", String(open));
+}
+
+layoutBtn.onclick = (e) => {
+  e.stopPropagation();
+  setLayoutOpen(!!layoutPop.hidden);
+};
+document.addEventListener("click", (e) => {
+  if (!layoutPop.hidden && !e.composedPath().includes(layoutPop)) setLayoutOpen(false);
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !layoutPop.hidden) setLayoutOpen(false);
+}, true);
+layoutPop.addEventListener("click", (e) => {
+  const el = e.target as HTMLElement;
+  const a = el.closest<HTMLElement>("[data-arrange]");
+  const add = el.closest<HTMLElement>("[data-add]");
+  if (a && !(a as HTMLButtonElement).disabled) arrange(a.dataset.arrange as Arrangement);
+  else if (add && !(add as HTMLButtonElement).disabled) {
+    const h = hosts.find((x) => x.id === add.dataset.add);
+    if (h) addSession(h);
+  } else if (el.closest("[data-reset]") && !el.closest<HTMLButtonElement>("[data-reset]")!.disabled) resetSizes();
+  if (!layoutPop.hidden) renderLayout();
+});
+
+function syncLayoutUi() {
+  const t = active;
+  const files = !t || t.mode === "files";
+  const n = t && !files ? panesOf(t).length : 0;
+  layoutBtn.disabled = files;
+  $("pane-count").textContent = `${n || 1}/${MAX_PANES}`;
+  const solo = !!t && !files && !!t.solo && n > 1;
+  const chip = $("solo-chip");
+  chip.hidden = !solo;
+  if (solo) chip.textContent = `Showing 1 of ${n} · Show all`;
+  if (files && !layoutPop.hidden) setLayoutOpen(false);
+  else if (!layoutPop.hidden) renderLayout();
+}
+
+$("solo-chip").onclick = () => {
+  const t = active;
+  if (!t) return;
+  t.solo = false;
+  relayout(t);
+  renderAll();
+  t.focus.term.focus();
+};
+
+type DragSrc = { kind: "pane"; pane: Pane } | { kind: "host"; host: Host };
+let dragSrc: DragSrc | undefined;
+
+function paneAt(e: DragEvent): Pane | undefined {
+  const el = (e.target as HTMLElement).closest<HTMLElement>(".pane");
+  return el && active ? panesOf(active).find((p) => p.el === el) : undefined;
+}
+
+function zoneAt(p: Pane, e: DragEvent, allowCenter: boolean): Zone | "center" {
+  const r = p.el.getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width;
+  const fy = (e.clientY - r.top) / r.height;
+  if (allowCenter && fx > 0.28 && fx < 0.72 && fy > 0.28 && fy < 0.72) return "center";
+  const d: Record<Zone, number> = { left: fx, right: 1 - fx, top: fy, bottom: 1 - fy };
+  return (Object.keys(d) as Zone[]).sort((a, b) => d[a] - d[b])[0];
+}
+
+function showDrop(p: Pane, zone: Zone | "center", label: string, bad: boolean) {
+  const d = $("dropzone");
+  const tr = $("terms").getBoundingClientRect();
+  const r = p.el.getBoundingClientRect();
+  let x = r.left, y = r.top, w = r.width, h = r.height;
+  if (zone === "left") w /= 2;
+  else if (zone === "right") { x += w / 2; w /= 2; }
+  else if (zone === "top") h /= 2;
+  else if (zone === "bottom") { y += h / 2; h /= 2; }
+  const pct = (v: number, of: number) => `${(v / of) * 100}%`;
+  Object.assign(d.style, { left: pct(x - tr.left, tr.width), top: pct(y - tr.top, tr.height), width: pct(w, tr.width), height: pct(h, tr.height) });
+  d.classList.toggle("bad", bad);
+  $("drop-label").textContent = label;
+  d.hidden = false;
+}
+
+function endDrag() {
+  dragSrc = undefined;
+  $("dropzone").hidden = true;
+  document.querySelectorAll(".pane.dragging").forEach((x) => x.classList.remove("dragging"));
+}
+
+$("terms").addEventListener("dragstart", (e) => {
+  const bar = (e.target as HTMLElement).closest?.(".pane-bar");
+  const p = bar && active ? panesOf(active).find((x) => x.el === bar.parentElement) : undefined;
+  if (!p || !e.dataTransfer) return;
+  dragSrc = { kind: "pane", pane: p };
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", p.host.name);
+  setTimeout(() => p.el.classList.add("dragging"), 0);
+});
+$("hosts").addEventListener("dragstart", (e) => {
+  const id = (e.target as HTMLElement).closest<HTMLElement>("[data-drag-host]")?.dataset.dragHost;
+  const h = hosts.find((x) => x.id === id);
+  if (!h || !e.dataTransfer) return;
+  dragSrc = { kind: "host", host: h };
+  e.dataTransfer.effectAllowed = "copy";
+  e.dataTransfer.setData("text/plain", h.name);
+});
+document.addEventListener("dragend", endDrag);
+$("terms").addEventListener("dragover", (e) => {
+  const t = active;
+  const target = paneAt(e);
+  if (!dragSrc || !t || !target || t.mode === "files") { $("dropzone").hidden = true; return; }
+  if (dragSrc.kind === "pane" && dragSrc.pane === target) { $("dropzone").hidden = true; return; }
+  if (dragSrc.kind === "host" && panesOf(t).length >= MAX_PANES) {
+    showDrop(target, "center", `Limit reached: ${MAX_PANES} sessions`, true);
+    return;
+  }
+  const z = zoneAt(target, e, dragSrc.kind === "pane");
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = dragSrc.kind === "host" ? "copy" : "move";
+  const verb = dragSrc.kind === "host" ? `Open ${dragSrc.host.name}` : "Dock";
+  showDrop(target, z, z === "center" ? `Swap with ${target.host.name}` : `${verb} ${ZONES[z].label} ${target.host.name}`, false);
+});
+$("terms").addEventListener("dragleave", (e) => {
+  if (!e.relatedTarget || !$("terms").contains(e.relatedTarget as HTMLElement)) $("dropzone").hidden = true;
+});
+$("terms").addEventListener("drop", (e) => {
+  const t = active;
+  const src = dragSrc;
+  const target = paneAt(e);
+  endDrag();
+  if (!src || !t || !target) return;
+  e.preventDefault();
+  const z = zoneAt(target, e, src.kind === "pane");
+  if (src.kind === "host") return addSession(src.host, target, z === "center" ? "right" : z);
+  const p = src.pane;
+  if (p === target || p.tab !== t) return;
+  if (z === "center") swapLeaves(t.root, p, target);
+  else {
+    t.root = dropPane(t.root, p)!;
+    t.root = insertAt(t.root, target, ZONES[z].dir, p, ZONES[z].before);
+  }
+  t.focus = p;
+  t.solo = false;
+  relayout(t);
+  renderAll();
+  p.term.focus();
+});
 
 function disposePane(p: Pane) {
   const ws = p.ws;
@@ -476,6 +758,7 @@ function cyclePane(dir: number) {
   const ps = panesOf(t);
   if (ps.length < 2) return;
   t.focus = ps[(ps.indexOf(t.focus) + dir + ps.length) % ps.length];
+  if (t.solo) relayout(t);
   markFocus(t);
   renderDrawer();
   t.focus.term.focus();
@@ -488,7 +771,7 @@ function send(pane: Pane, data: Uint8Array<ArrayBuffer>) {
 function promptPassphrase(pane: Pane, retry: boolean, remaining: number) {
   pane.passphrase = "";
   const note = retry ? `\r\n\x1b[31mIncorrect passphrase.\x1b[0m ${remaining} ${remaining === 1 ? "try" : "tries"} left.\r\n` : "";
-  pane.term.write(`${note}\x1b[33mPassphrase for ${pane.tab.host.addr}:\x1b[0m `);
+  pane.term.write(`${note}\x1b[33mPassphrase for ${pane.host.addr}:\x1b[0m `);
   pane.term.focus();
 }
 
@@ -496,14 +779,14 @@ async function handlePassphraseRequest(pane: Pane, ws: WebSocket, retry: boolean
   pane.pendingSave = undefined;
   if (retry && pane.usedSaved) {
     pane.usedSaved = false;
-    await forgetPassphrase(scope, pane.tab.host.id).catch(() => {});
+    await forgetPassphrase(scope, pane.host.id).catch(() => {});
     renderAutoPass();
     pane.term.write("\r\n\x1b[90mThe saved passphrase no longer works, so it was forgotten.\x1b[0m");
   } else if (!retry && autoPassEnabled()) {
-    const saved = await loadPassphrase(scope, pane.tab.host.id).catch(() => undefined);
+    const saved = await loadPassphrase(scope, pane.host.id).catch(() => undefined);
     if (saved !== undefined && pane.ws === ws && ws.readyState === WebSocket.OPEN) {
       pane.usedSaved = true;
-      pane.term.write(`\x1b[90mUsing the passphrase saved in this browser for ${pane.tab.host.addr}.\x1b[0m\r\n`);
+      pane.term.write(`\x1b[90mUsing the passphrase saved in this browser for ${pane.host.addr}.\x1b[0m\r\n`);
       ws.send(JSON.stringify({ t: "passphrase", value: saved }));
       return;
     }
@@ -535,11 +818,12 @@ function connect(pane: Pane) {
   pane.pendingSave = undefined;
   pane.state = "connecting";
   pane.info = undefined;
-  pane.tab.files.reset();
+  if (pane.tab.focus === pane) { pane.tab.files.reset(); pane.tab.filesFor = undefined; }
   pane.reason = undefined;
-  pane.term.write(`\x1b[90mConnecting to ${pane.tab.host.addr}…\x1b[0m\r\n`);
+  paintBar(pane);
+  pane.term.write(`\x1b[90mConnecting to ${pane.host.addr}…\x1b[0m\r\n`);
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const q = new URLSearchParams({ host: pane.tab.host.id, cols: String(pane.term.cols), rows: String(pane.term.rows) });
+  const q = new URLSearchParams({ host: pane.host.id, cols: String(pane.term.cols), rows: String(pane.term.rows) });
   const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
   ws.binaryType = "arraybuffer";
   pane.ws = ws;
@@ -552,7 +836,7 @@ function connect(pane: Pane) {
     const msg = JSON.parse(ev.data);
     if (msg.t === "passphrase") {
       void handlePassphraseRequest(pane, ws, !!msg.retry, Number(msg.remaining) || 0);
-      if (msg.retry && pane.tab === active) loadSignins(pane.tab.host.id);
+      if (msg.retry && pane.tab === active) loadSignins(pane.host.id);
       return;
     }
     if (msg.t === "error") { pane.term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`); return; }
@@ -565,7 +849,7 @@ function connect(pane: Pane) {
         if (pane.pendingSave !== undefined) {
           const v = pane.pendingSave;
           pane.pendingSave = undefined;
-          if (autoPassEnabled()) savePassphrase(scope, pane.tab.host.id, v).then(renderAutoPass).catch(() => {});
+          if (autoPassEnabled()) savePassphrase(scope, pane.host.id, v).then(renderAutoPass).catch(() => {});
         }
       }
       leaveFilesIfGone(pane.tab);
@@ -597,6 +881,7 @@ function showBanner(pane: Pane) {
 }
 
 function refresh(p: Pane) {
+  paintBar(p);
   renderTabs();
   renderHosts();
   if (p.tab === active) renderDrawer();
@@ -606,6 +891,7 @@ function renderAll() {
   renderTabs();
   renderHosts();
   renderDrawer();
+  syncLayoutUi();
 }
 
 function activate(tab: Tab) {
@@ -681,19 +967,19 @@ const failure = (r: Response | undefined) => (r ? `status ${r.status}` : "no res
 $("signout-others").onclick = async () => {
   const r = await fetch("/api/signins/signout-others", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
   if (!r?.ok) notify(`Could not sign out the other sessions (${failure(r)}). They are still signed in.`);
-  loadSignins(active?.host.id);
+  loadSignins(active?.focus.host.id);
 };
 
 function renderDrawer() {
   const tab = active;
   const t = tab?.focus;
   $("close-session").hidden = !tab;
-  const key = `${tab?.host.id ?? ""}|${t?.state ?? ""}`;
-  if (key !== signinsKey) { signinsKey = key; loadSignins(tab?.host.id); }
+  const key = `${t?.host.id ?? ""}|${t?.state ?? ""}`;
+  if (key !== signinsKey) { signinsKey = key; loadSignins(t?.host.id); }
   const i = t?.info;
   const row = (k: string, v: string) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
   $("kv").innerHTML = !tab || !t ? `<dt>—</dt><dd>No session</dd>` :
-    row("Host", i?.host ?? tab.host.addr) + row("User", i?.user ?? tab.host.addr.split("@")[0]) +
+    row("Host", i?.host ?? t.host.addr) + row("User", i?.user ?? t.host.addr.split("@")[0]) +
     row("Auth", i?.auth ?? "—") + row("Cipher", i?.cipher || "—") + row("Host key", i?.hostKey ?? "—") +
     row("Since", i ? new Date(i.since).toLocaleTimeString() : "—") + row("State", t.state + (t.reason && t.state === "closed" ? ` (${t.reason})` : "")) +
     (panesOf(tab).length > 1 ? row("Panes", String(panesOf(tab).length)) : "");
@@ -705,9 +991,9 @@ $("keys").innerHTML = [
   [`${TERM_MOD} K`, "Search hosts"],
   [isMac ? "⌘ C / ⌘ V" : "Ctrl Shift C / V", "Copy / paste"],
   ["Alt ← / →", "Previous / next tab"],
-  ["Alt Shift D / S", "Split right / down"],
-  ["Alt Shift ← / →", "Previous / next pane"],
-  ["Alt Shift W", "Close pane"],
+  ["Alt Shift D", "Add another session of this host"],
+  ["Alt Shift ← / →", "Previous / next session in the view"],
+  ["Alt Shift W", "Close session"],
 ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
@@ -747,8 +1033,7 @@ function runShortcut(e: KeyboardEvent, primary: boolean): boolean {
   const k = e.key.toLowerCase();
   if (primary && k === "b") toggleRail();
   else if (primary && k === "k") focusSearch();
-  else if (e.altKey && e.shiftKey && e.code === "KeyD") splitPane("row");
-  else if (e.altKey && e.shiftKey && e.code === "KeyS") splitPane("col");
+  else if (e.altKey && e.shiftKey && e.code === "KeyD") { if (active) addSession(active.focus.host); }
   else if (e.altKey && e.shiftKey && e.code === "KeyW") { if (active && active.mode === "term") closePane(active.focus); }
   else if (e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) cyclePane(e.key === "ArrowRight" ? 1 : -1);
   else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) cycle(e.key === "ArrowRight" ? 1 : -1);

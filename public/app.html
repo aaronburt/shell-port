@@ -17,9 +17,9 @@
     </div>
     <div class="tab-scroll" id="tab-scroll"></div>
     <div class="tab-tools">
-      <button class="tool" id="split-right" aria-label="Split pane right" title="Split right (Alt Shift D)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg></button>
-      <button class="tool" id="split-down" aria-label="Split pane down" title="Split down (Alt Shift S)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/></svg></button>
+      <button class="tool" id="layout-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Pane layout and sessions" title="Layout and sessions (up to 8 per view)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg><span class="mono" id="pane-count">1/8</span></button>
       <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      <div class="lay-pop" id="layout-pop" role="dialog" aria-label="Layout and sessions" hidden></div>
     </div>
   </div>
 
@@ -37,6 +37,8 @@
   <div class="main">
     <div class="term-wrap">
       <div class="terms" id="terms">
+        <button class="solo-chip" id="solo-chip" type="button" hidden></button>
+        <div class="dropzone" id="dropzone" hidden><span id="drop-label"></span></div>
         <div class="empty" id="empty">
           <span class="logo big">&gt;_</span>
           <p>Pick a host from the sidebar to open a terminal.</p>
