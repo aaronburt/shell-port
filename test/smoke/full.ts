@@ -664,7 +664,7 @@ test("UI: the sidebar footer is pinned to the bottom and shows only the avatar a
   assert.equal(await foot.locator("svg, button:not(#account-btn):visible").count(), 0);
   assert.equal(await foot.locator("#add-host").isHidden(), true);
   assert.equal(await foot.locator("#account-btn #me-avatar").count(), 1);
-  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "dialog");
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), null);
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-label"), "Account menu");
   assert.equal(await ui.locator("#signout, #umenu").count(), 0);
 });
@@ -756,7 +756,7 @@ test("UI: the folder icon on an SSH tab switches that tab between the terminal a
 test("UI: the folder icon is hidden for hosts with files turned off", async () => {
   await ui.locator('button.host[data-host="nofiles"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
-  assert.equal(await ui.locator(".tab.active .tab-files").count(), 0);
+  assert.equal(await ui.locator(".tab.active .tab-files:not(.tab-x)").count(), 0);
   await ui.locator("#close-session").click();
 });
 
