@@ -6,6 +6,7 @@ import { feedPassphrase } from "./passphrase.js";
 import { FilesPane } from "./files.js";
 import { initAddHost } from "./addhost.js";
 import { initPasskeys } from "./passkeys.js";
+import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
 interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean }
@@ -29,6 +30,8 @@ interface Pane {
   info?: Info;
   reason?: string;
   passphrase?: string;
+  usedSaved?: boolean;
+  pendingSave?: string;
 }
 
 type Dir = "row" | "col";
@@ -489,12 +492,32 @@ function promptPassphrase(pane: Pane, retry: boolean, remaining: number) {
   pane.term.focus();
 }
 
+async function handlePassphraseRequest(pane: Pane, ws: WebSocket, retry: boolean, remaining: number) {
+  pane.pendingSave = undefined;
+  if (retry && pane.usedSaved) {
+    pane.usedSaved = false;
+    await forgetPassphrase(scope, pane.tab.host.id).catch(() => {});
+    renderAutoPass();
+    pane.term.write("\r\n\x1b[90mThe saved passphrase no longer works, so it was forgotten.\x1b[0m");
+  } else if (!retry && autoPassEnabled()) {
+    const saved = await loadPassphrase(scope, pane.tab.host.id).catch(() => undefined);
+    if (saved !== undefined && pane.ws === ws && ws.readyState === WebSocket.OPEN) {
+      pane.usedSaved = true;
+      pane.term.write(`\x1b[90mUsing the passphrase saved in this browser for ${pane.tab.host.addr}.\x1b[0m\r\n`);
+      ws.send(JSON.stringify({ t: "passphrase", value: saved }));
+      return;
+    }
+  }
+  if (pane.ws === ws) promptPassphrase(pane, retry, remaining);
+}
+
 function typePassphrase(pane: Pane, data: string) {
   if (pane.passphrase === undefined) return;
   const { value, action } = feedPassphrase(pane.passphrase, data);
   if (action === "submit") {
     pane.passphrase = undefined;
     pane.term.write("\r\n");
+    if (autoPassEnabled()) pane.pendingSave = value;
     if (pane.ws?.readyState === WebSocket.OPEN) pane.ws.send(JSON.stringify({ t: "passphrase", value }));
   } else if (action === "cancel") {
     pane.passphrase = undefined;
@@ -508,6 +531,8 @@ function typePassphrase(pane: Pane, data: string) {
 function connect(pane: Pane) {
   pane.el.querySelector(".banner")?.remove();
   pane.passphrase = undefined;
+  pane.usedSaved = false;
+  pane.pendingSave = undefined;
   pane.state = "connecting";
   pane.info = undefined;
   pane.tab.files.reset();
@@ -526,7 +551,7 @@ function connect(pane: Pane) {
     if (ev.data instanceof ArrayBuffer) { pane.term.write(new Uint8Array(ev.data)); return; }
     const msg = JSON.parse(ev.data);
     if (msg.t === "passphrase") {
-      promptPassphrase(pane, !!msg.retry, Number(msg.remaining) || 0);
+      void handlePassphraseRequest(pane, ws, !!msg.retry, Number(msg.remaining) || 0);
       if (msg.retry && pane.tab === active) loadSignins(pane.tab.host.id);
       return;
     }
@@ -535,7 +560,14 @@ function connect(pane: Pane) {
       pane.state = msg.state;
       if (msg.info) pane.info = msg.info;
       if (msg.reason) pane.reason = msg.reason;
-      if (msg.state === "connected") pane.fit.fit();
+      if (msg.state === "connected") {
+        pane.fit.fit();
+        if (pane.pendingSave !== undefined) {
+          const v = pane.pendingSave;
+          pane.pendingSave = undefined;
+          if (autoPassEnabled()) savePassphrase(scope, pane.tab.host.id, v).then(renderAutoPass).catch(() => {});
+        }
+      }
       leaveFilesIfGone(pane.tab);
       refresh(pane);
     }
@@ -821,6 +853,7 @@ $("signout-confirm").onclick = async () => {
   const confirm = $<HTMLButtonElement>("signout-confirm");
   confirm.disabled = true;
   const r = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+  if (r?.ok) await forgetAllPassphrases().catch(() => {});
   confirm.disabled = false;
   if (!r?.ok) {
     closeSignOutDialog();
@@ -830,6 +863,29 @@ $("signout-confirm").onclick = async () => {
   for (const t of tabs) for (const p of panesOf(t)) p.ws?.close();
   tabs = [];
   location.replace("/");
+};
+
+const apSection = $("acct-ap-sec");
+const apToggle = $("ap-toggle");
+const apForget = $<HTMLButtonElement>("ap-forget");
+
+async function renderAutoPass() {
+  const on = autoPassEnabled();
+  apToggle.setAttribute("aria-checked", String(on));
+  const n = scope ? await countPassphrases(scope).catch(() => 0) : 0;
+  $("ap-count").textContent = n ? `${n} ${n === 1 ? "passphrase" : "passphrases"} saved.` : "Nothing saved.";
+  apForget.disabled = n === 0;
+}
+
+apToggle.onclick = async () => {
+  const on = !autoPassEnabled();
+  setAutoPassEnabled(on);
+  if (!on) await forgetAllPassphrases().catch(() => {});
+  renderAutoPass();
+};
+apForget.onclick = async () => {
+  await forgetAllPassphrases().catch(() => {});
+  renderAutoPass();
 };
 
 const sealScrim = $("seal-scrim");
@@ -894,7 +950,12 @@ function initialsOf(name: string, login: string): string {
   return letters.toUpperCase();
 }
 
+let scope = "";
+
 function renderMe(me: Me) {
+  scope = me.login;
+  apSection.hidden = !passSupported();
+  renderAutoPass();
   const avatar = me.avatarUrl && me.avatarUrl.startsWith("https://avatars.githubusercontent.com/") ? me.avatarUrl : "";
   for (const [imgId, initialsId] of [["me-avatar", "me-initials"], ["acct-avatar-img", "acct-initials"]]) {
     const img = $<HTMLImageElement>(imgId);

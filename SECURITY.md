@@ -22,7 +22,7 @@ What it defends against:
 - Anonymous access: GitHub OAuth plus a required, single-use TOTP code, or a passkey, with rate limits on sign-in and code entry.
 - Passkeys: a signed-in user can register passkeys for their own account only. They require a resident credential and user verification (fingerprint, face or PIN), so a passkey sign-in stands on its own and skips GitHub and TOTP. Challenges are random, single use and expire after five minutes. The server checks origin, relying party ID (the host in `publicUrl`), signature and the signature counter. A passkey only works while its owner is still in `users`, and the public keys are stored with that user (inside the sealed vault when sealed). Removing a user or a passkey ends its ability to sign in, but existing sessions run until they expire or are signed out. Passkeys are tied to the `publicUrl` host name, so changing it makes them stop working.
 - Cross-site attacks: exact `Origin` check on the WebSocket, `SameSite` HttpOnly cookies, no CORS, a strict Content-Security-Policy with no inline or third-party scripts, and no framing.
-- Credential theft from the browser: SSH keys and passwords stay on the server and are never sent to the client. Key hosts ask the user for the key passphrase in the terminal tab, and it is never stored or logged.
+- Credential theft from the browser: SSH keys and passwords stay on the server and are never sent to the client. Key hosts ask the user for the key passphrase in the terminal tab, and the server never stores or logs it.
 - Abuse of the file explorer: it uses the terminal's own SSH connection, so no second login or credential is involved. Each request needs the signed-in session that owns the terminal and an unguessable terminal id, and deletes also need the same `Origin`. Paths must be absolute with no `..` or control characters, previews and downloads are size limited, at most two downloads run per terminal, and every list, view, download and delete is written to the audit log with the user, host and path. A host can opt out with `files: false`.
 - Man-in-the-middle on the SSH hop: host keys must be pinned by fingerprint, and a mismatch is refused and logged.
 
@@ -56,3 +56,11 @@ An optional vault (`vault.sealed`) replaces `config.json` and `.env`. See the RE
 - **Plain-text leftovers.** `export` and the editor's temporary file contain secrets in plain text. The temporary file is mode 0600, placed in `/dev/shm` when available, and overwritten and removed afterwards.
 
 Do not commit `.env`, `config.json`, `keys/` or any private key. The repository's `.gitignore` excludes them.
+
+## Passphrase auto enter (browser-side, opt-in)
+
+Off by default. When a user turns it on in Account, a passphrase they type for a host is kept in that browser and sent again on the next connect. The server is not involved: it receives the passphrase through the same message as a typed one and stores nothing.
+
+- Each passphrase is encrypted with AES-GCM using a key generated in the browser as non-extractable, and both live in IndexedDB. The record is bound to the signed-in login and the host id, so another user on the same browser profile cannot use it.
+- Saved passphrases are deleted when the user signs out, turns the setting off or presses **Forget all**. A passphrase is saved only after the connection it unlocked succeeds, and one that stops working is deleted. A session that expires without a sign-out leaves them in place.
+- What this does not protect against: anyone who can run code in the page (an XSS bug) or use the unlocked browser profile can read the passphrase, because the browser decrypts it on their behalf. It keeps passphrases out of plain text in browser storage and stops the key being exported, but it is not protection against a compromised browser or a stolen unlocked profile. Do not enable it on shared or untrusted machines. It needs a secure context (HTTPS or localhost).
