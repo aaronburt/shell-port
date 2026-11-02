@@ -59,7 +59,7 @@ Do not commit `.env`, `config.json`, `keys/` or any private key. The repository'
 
 ## Passphrase auto enter (browser-side, opt-in)
 
-Off by default. When a user turns it on in Account, a passphrase they type for a host is kept in that browser and sent again on the next connect. The server is not involved: it receives the passphrase through the same message as a typed one and stores nothing.
+Off by default and a riskier option: the passphrase is left in the browser's storage, and the Account page says so. When a user turns it on in Account, a passphrase they type for a host is kept in that browser and sent again on the next connect. The server is not involved: it receives the passphrase through the same message as a typed one and stores nothing.
 
 - Each passphrase is encrypted with AES-GCM using a key generated in the browser as non-extractable, and both live in IndexedDB. The record is bound to the signed-in login and the host id, so another user on the same browser profile cannot use it.
 - Saved passphrases are deleted when the user signs out, turns the setting off or presses **Forget all**. A passphrase is saved only after the connection it unlocked succeeds, and one that stops working is deleted. A session that expires without a sign-out leaves them in place.

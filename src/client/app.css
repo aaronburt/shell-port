@@ -285,3 +285,5 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 @keyframes pk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .pk-spin { animation: none; } }
 .acct-sec .fine, .pk-foot .fine { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.ap-warn { margin-top: 14px; }
+.acct-row + .ap-warn, .ap-warn + .acct-row { margin-top: 14px; }
