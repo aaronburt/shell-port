@@ -46,6 +46,7 @@ interface Tab {
   focus: Pane;
   mode: "term" | "files";
   files: FilesPane;
+  wantPath?: string;
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -207,8 +208,34 @@ let dragKey: string | undefined;
 
 const canBrowse = (t: Tab) => { const p = filesPane(t); return !!p && p.info?.files !== false; };
 
+function syncUrl() {
+  const q = new URLSearchParams();
+  for (const t of tabs) {
+    const p = t.mode === "files" ? t.files.cwd : t.wantPath;
+    q.append("open", p ? `${t.host.id}:${p}` : t.host.id);
+  }
+  const s = q.toString();
+  try { history.replaceState(null, "", location.pathname + (s ? `?${s}` : "")); } catch {}
+}
+
+function openFromUrl() {
+  for (const v of new URLSearchParams(location.search).getAll("open")) {
+    const i = v.indexOf(":");
+    const id = i < 0 ? v : v.slice(0, i);
+    const path = i < 0 ? "" : v.slice(i + 1);
+    const h = hosts.find((x) => x.id === id);
+    if (!h) continue;
+    openTab(h);
+    if (path.startsWith("/")) tabs[tabs.length - 1].wantPath = path;
+  }
+  const first = tabs[0];
+  if (first) activate(first);
+  syncUrl();
+}
+
 function setMode(tab: Tab, mode: Tab["mode"]) {
   tab.mode = mode;
+  syncUrl();
   if (tab !== active) return activate(tab);
   applyMode();
   renderTabs();
@@ -305,6 +332,7 @@ function openTab(h: Host) {
       const i = filesPane(tab)?.info;
       return `${i?.user ?? tab.host.addr.split("@")[0]}@${tab.host.addr.split("@").slice(1).join("@")}`;
     },
+    onPath: syncUrl,
   });
   const pane = makePane(tab);
   tab.root = { pane };
@@ -316,6 +344,7 @@ function openTab(h: Host) {
   activate(tab);
   pane.fit.fit();
   connect(pane);
+  syncUrl();
 }
 
 function makePane(tab: Tab): Pane {
@@ -569,6 +598,12 @@ function connect(pane: Pane) {
         }
       }
       leaveFilesIfGone(pane.tab);
+      const t = pane.tab;
+      if (msg.state === "connected" && t.wantPath && canBrowse(t)) {
+        t.files.initial = t.wantPath;
+        t.wantPath = undefined;
+        setMode(t, "files");
+      }
       refresh(pane);
     }
   };
@@ -620,6 +655,7 @@ function closeTab(tab: Tab) {
   for (const p of panesOf(tab)) disposePane(p);
   tab.files.dispose();
   tab.layout.remove();
+  syncUrl();
   if (active === tab) {
     active = tabs[Math.min(i, tabs.length - 1)];
     if (active) return activate(active);
@@ -1023,4 +1059,5 @@ $("close-session").onclick = () => {
   hosts = hs;
   renderMe(me);
   renderAll();
+  openFromUrl();
 })();

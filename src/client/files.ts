@@ -8,6 +8,7 @@ interface Preview { path: string; size: number; truncated: boolean; binary: bool
 export interface FilesOptions {
   terminalId(): string | undefined;
   where(): string;
+  onPath?(): void;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -51,6 +52,7 @@ export class FilesPane {
   private seq = 0;
   private menu: HTMLElement;
   private started = false;
+  initial: string | undefined;
 
   constructor(private opts: FilesOptions) {
     this.el = document.createElement("div");
@@ -74,8 +76,14 @@ export class FilesPane {
     this.el.hidden = false;
     if (!this.started) {
       this.started = true;
-      this.go();
+      const first = this.initial;
+      this.initial = undefined;
+      this.go(first);
     } else this.render();
+  }
+
+  get cwd() {
+    return this.path;
   }
 
   reset() {
@@ -130,6 +138,7 @@ export class FilesPane {
       if (seq !== this.seq) return;
       this.listing = data;
       this.path = data.path;
+      this.opts.onPath?.();
       this.view = undefined;
       if (!data.entries.some((x) => x.name === this.sel)) this.sel = undefined;
       if (data.truncated) this.notice = "Only the first entries are shown. This folder is very large.";
