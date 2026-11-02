@@ -136,7 +136,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .acct[open] { animation: acct-in .18s ease; }
 @keyframes acct-in { from { opacity: 0; transform: translateY(10px); } }
 @media (prefers-reduced-motion: reduce) { .acct[open] { animation: none; } }
-.acct-body { display: flex; flex-direction: column; max-height: calc(100vh - 32px); overflow: auto; }
+.acct[open] { display: flex; flex-direction: column; }
+.acct-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .acct-head { display: flex; align-items: center; gap: 14px; padding: 20px 22px 18px; border-bottom: 1px solid var(--line); }
 .acct-avatar { width: 48px; height: 48px; font-size: 16px; }
 .acct-head h3 { margin: 0; font-family: var(--f-display); font-size: 20px; letter-spacing: -.01em; overflow-wrap: anywhere; }
