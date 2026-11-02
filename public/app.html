@@ -87,6 +87,17 @@
       <ul class="pk-list" id="pk-list"></ul>
       <div class="pk-foot"><p class="fine">You can only add a passkey while signed in. Your GitHub account must stay on this server's allowlist.</p><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
     </section>
+    <section class="acct-sec" id="acct-ap-sec" hidden>
+      <h5>SSH key passphrases</h5>
+      <div class="acct-row">
+        <div><strong id="ap-label">Passphrase auto enter</strong><small>Remember the passphrase for each host after you type it once, and enter it for you next time. Stored only in this browser, encrypted with a key the browser cannot export. Never saved on the server.</small></div>
+        <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
+      </div>
+      <div class="acct-row">
+        <div><strong>Saved on this browser</strong><small id="ap-count">Nothing saved.</small><small>Saved passphrases are also forgotten when you sign out, and a saved one that stops working is discarded.</small></div>
+        <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>
+      </div>
+    </section>
     <section class="acct-sec" id="acct-seal-sec" hidden>
       <h5>Server</h5>
       <div class="acct-row">
