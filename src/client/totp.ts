@@ -6,11 +6,22 @@ const show = (m: string) => { err.textContent = m; err.hidden = false; };
 
 fetch("/auth/totp").then(async (r) => {
   if (!r.ok) { location.replace("/"); return; }
-  $("who").textContent = (await r.json()).login;
+  const login = (await r.json()).login;
+  $("who").textContent = login;
+  $<HTMLInputElement>("user").value = login;
+});
+
+const codeEl = $<HTMLInputElement>("code");
+let busy = false;
+codeEl.addEventListener("input", () => {
+  // Auto-submit once 6 digits are in (typed, pasted or autofilled).
+  if (codeEl.value.replace(/\D/g, "").length === 6 && !busy) $<HTMLFormElement>("form").requestSubmit();
 });
 
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (busy) return;
+  busy = true;
   const btn = $<HTMLButtonElement>("go");
   btn.disabled = true;
   try {
@@ -26,7 +37,7 @@ $("form").addEventListener("submit", async (e) => {
     if (r.status === 429) show("Too many attempts. Wait a few minutes.");
     else show(`That code didn't work${j.remaining ? ` (${j.remaining} attempts left)` : ""}. Codes change every 30 seconds.`);
     $<HTMLInputElement>("code").select();
-  } finally { btn.disabled = false; }
+  } finally { btn.disabled = false; busy = false; }
 });
 
 $("cancel").addEventListener("click", async (e) => {
