@@ -50,6 +50,7 @@ export interface AppConfig {
     idleTimeoutMinutes: number;
     loginAttemptsPer15Min: number;
     maxDownloadMB: number;
+    auditRetentionDays: number;
   };
   security: {
     allowUnpinnedHostKeys: boolean;
@@ -286,6 +287,7 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
       idleTimeoutMinutes: intOption(raw.limits?.idleTimeoutMinutes, "limits.idleTimeoutMinutes", 30, 0),
       loginAttemptsPer15Min: intOption(raw.limits?.loginAttemptsPer15Min, "limits.loginAttemptsPer15Min", 30, 1),
       maxDownloadMB: intOption(raw.limits?.maxDownloadMB, "limits.maxDownloadMB", 256, 1, 4096),
+      auditRetentionDays: intOption(raw.limits?.auditRetentionDays, "limits.auditRetentionDays", 90, 1, 3650),
     },
     security,
     hosts,

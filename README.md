@@ -39,8 +39,8 @@ Shellport follows your system's light or dark setting. Dark is the default, and 
       <sub>Passphrase prompt for a protected key</sub>
     </td>
     <td width="50%">
-      <img src="docs/screenshots/05-account-modal.png" alt="Account dialog with the display switch, keyboard shortcuts and sign out"><br>
-      <sub>Account dialog, with shortcuts and sign out</sub>
+      <img src="docs/screenshots/05-account-modal.png" alt="Account tab with the display switch, keyboard shortcuts and sign out"><br>
+      <sub>Account tab, with shortcuts and sign out</sub>
     </td>
   </tr>
 </table>
@@ -67,8 +67,8 @@ Shellport follows your system's light or dark setting. Dark is the default, and 
       <sub>Passphrase prompt for a protected key</sub>
     </td>
     <td width="50%">
-      <img src="docs/screenshots/dark/05-account-modal.png" alt="Dark account dialog with the display switch, keyboard shortcuts and sign out"><br>
-      <sub>Account dialog, with shortcuts and sign out</sub>
+      <img src="docs/screenshots/dark/05-account-modal.png" alt="Dark account tab with the display switch, keyboard shortcuts and sign out"><br>
+      <sub>Account tab, with shortcuts and sign out</sub>
     </td>
   </tr>
 </table>
@@ -138,7 +138,7 @@ Shellport reads `config.json`. Start from [`config.example.json`](config.example
 | `github` | OAuth app `clientId` and `clientSecret`. |
 | `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. Set `"admin": true` on a user to let them add hosts from the browser. A `passkeys` list is written by Shellport when a user adds a passkey under Account; do not edit it by hand. |
 | `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints`, optional `allowedUsers`, and `files` (set it to `false` to turn off the file explorer for that host; it is on by default). |
-| `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, and `maxDownloadMB` (largest file the explorer will download, default 256). |
+| `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, `maxDownloadMB` (largest file the explorer will download, default 256), and `auditRetentionDays` (how long the audit log is kept, default 90). |
 | `session` | How long a sign-in lasts (`ttlHours`). |
 | `security` | Security options. Leave `allowUnpinnedHostKeys` at `false`. |
 
@@ -202,7 +202,7 @@ A running server keeps the config it unsealed with. After `edit` or `import`, se
 - **Files.** Click the folder icon on a tab to see the host's files, and click it again to go back to the terminal. Click a file or folder to select it, double-click to open a folder or view a file, and right-click for **View** or **Open**, **Download** and **Delete**. The path bar has **Up** and **Refresh**. Delete asks first, removes one file or one empty folder, and can't be undone. The viewer is read only and shows the first 256 KB of a text file.
 - **Shareable links.** The address bar follows your open tabs, one `open` value per tab. A tab is its host ids joined by commas for each session in its view, with an optional layout in front and an optional folder at the end: `?open=grid!web1,db,web1:/var/log`. The layout is one of `single`, `cols`, `rows`, `grid` or `main`, and the folder opens in the file explorer. Bookmark the link, or send it to someone who can see the same hosts, and opening it reopens those tabs. Each session still connects normally, so a key passphrase is still asked for. Links hold host ids and paths only, never secrets, and unknown hosts are ignored.
 - **Screen lock.** The padlock in the tab bar (or `Alt` `Shift` `L`) hides every terminal and blocks input while your SSH sessions stay connected. Unlock with a passkey (if you have one) or your authenticator code. Five wrong codes sign you out. Under Account you can lock now and turn on **Auto-lock when idle** (1 minute to 1 hour, saved in this browser). The lock is a screen lock in this browser, not a security boundary: output still reaches the page underneath, and a lock set in one browser does not stop someone using the same signed-in session elsewhere. A refresh keeps the lock on.
-- **Account.** Click your avatar for the account dialog. It shows your login, a **Hide host addresses** switch (stored in this browser only), the keyboard shortcuts, and **Sign out**. Signing out asks first, because it disconnects your open terminals.
+- **Account.** Click your avatar to open the Account tab. Page tabs such as Account and the Audit log sit after your terminal tabs in blue, and Alt+←/→ cycles through all tabs. Hold Shift and the files button on a tab becomes a close button. The Account tab shows your login, a **Hide host addresses** switch (stored in this browser only), the keyboard shortcuts, and **Sign out**. Signing out asks first, because it disconnects your open terminals.
 
 | Shortcut | Action |
 | --- | --- |
@@ -237,6 +237,14 @@ npm run smoke:full       # real SSH containers and a headless browser (needs Doc
 ```
 
 Set `SMOKE_SCREENSHOTS=<folder>` with `npm run smoke:full` to save UI screenshots.
+
+## Audit log
+
+Admins get an **Audit log** tab (Account → Audit log). It records sign-ins and failures, SSH connects and disconnects per user and host, host and key changes, passkeys added or removed, failed screen-lock unlocks, and the server being sealed or unsealed. Passwords, passphrases, keys and terminal content are never recorded. Failed attempts on the sealed-mode unseal page are not recorded.
+
+The tab filters by user, host, event type and period, and **Export CSV** downloads everything the filters match.
+
+Events are appended to a JSONL file, `audit.log`, next to the vault (or the config file). Set `SHELLPORT_AUDIT` to use another path. While the server is sealed, every line is encrypted with a key derived from the vault key. Entries older than `limits.auditRetentionDays` (default 90) are removed. If the file cannot be written, for example when `/config` is mounted read-only, events stay in memory only and the tab warns you.
 
 ## Security
 

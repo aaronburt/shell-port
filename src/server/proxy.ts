@@ -6,6 +6,7 @@ import { resolveSecret, hostNeedsPassphrase, type HostConfig, type LoadedConfig 
 import type { RateLimiter, UserSession } from "./sessions.js";
 import { audit } from "./log.js";
 import type { ActivityLog } from "./activity.js";
+import type { AuditLog } from "./auditlog.js";
 import { FileError } from "./sftp.js";
 
 const HIGH_WATER = 1 << 20;
@@ -60,6 +61,7 @@ export function openTerminal(opts: {
   host: HostConfig;
   session: UserSession;
   activity: ActivityLog;
+  auditLog: AuditLog;
   passphraseLimiter: RateLimiter;
   ip: string;
   timing?: TerminalTiming;
@@ -110,6 +112,9 @@ export function openTerminal(opts: {
 
   const ssh = new Client();
   const auditBase = { user: session.login, host: host.id, ip };
+  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string) =>
+    opts.auditLog.add({ kind, user: session.login, ip, host: host.name, detail });
+  let opened = false;
 
   const close = (reason: string) => {
     if (closed) return;
@@ -122,6 +127,7 @@ export function openTerminal(opts: {
     send({ t: "status", state: "closed", reason });
     if (ws.readyState === ws.OPEN) ws.close(1000, reason.slice(0, 120));
     audit("terminal.close", { ...auditBase, reason, seconds: Math.round((Date.now() - started) / 1000), bytesIn, bytesOut });
+    if (opened) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`);
     opts.onClose();
   };
 
@@ -162,6 +168,7 @@ export function openTerminal(opts: {
     }
   } catch (e) {
     audit("terminal.error", { ...auditBase, error: (e as Error).message });
+    trail("ssh_failed", "Credentials are misconfigured on the server");
     send({ t: "error", message: "This host's credentials are misconfigured on the server." });
     queueMicrotask(() => close("Configuration error"));
     return handle;
@@ -184,6 +191,8 @@ export function openTerminal(opts: {
       stream = s;
       mark("shellMs");
       audit("terminal.open", { ...auditBase, ...phases });
+      opened = true;
+      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}`);
       send({
         t: "status",
         state: "connected",
@@ -224,6 +233,7 @@ export function openTerminal(opts: {
   ssh.on("error", (err) => {
     if (closed) return;
     audit("terminal.error", { ...auditBase, error: err.message });
+    trail("ssh_failed", friendlyError(err, mismatch));
     send({ t: "error", message: friendlyError(err, mismatch) });
     close("Connection failed");
   });
@@ -277,6 +287,7 @@ export function openTerminal(opts: {
   function failPassphrase(restartTimer: boolean) {
     passphraseTries++;
     audit("terminal.passphrase_failed", { ...auditBase, attempt: passphraseTries });
+    trail("passphrase_failed", `Attempt ${passphraseTries} of ${PASSPHRASE_TRIES}`);
     opts.activity.add({ kind: "passphrase_failed", githubId: session.githubId, ip, host: host.id });
     if (passphraseTries >= PASSPHRASE_TRIES) {
       send({ t: "error", message: "Incorrect passphrase." });
@@ -288,6 +299,7 @@ export function openTerminal(opts: {
   function submitPassphrase(value: string) {
     if (!opts.passphraseLimiter.hit(`${session.githubId}:${host.id}`)) {
       audit("terminal.passphrase_throttled", auditBase);
+      trail("ssh_failed", "Too many incorrect passphrases, throttled");
       send({ t: "error", message: "Too many incorrect passphrases. Try again later." });
       return close("Passphrase attempts throttled");
     }

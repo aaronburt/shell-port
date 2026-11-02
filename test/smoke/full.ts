@@ -664,7 +664,7 @@ test("UI: the sidebar footer is pinned to the bottom and shows only the avatar a
   assert.equal(await foot.locator("svg, button:not(#account-btn):visible").count(), 0);
   assert.equal(await foot.locator("#add-host").isHidden(), true);
   assert.equal(await foot.locator("#account-btn #me-avatar").count(), 1);
-  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "dialog");
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), null);
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-label"), "Account menu");
   assert.equal(await ui.locator("#signout, #umenu").count(), 0);
 });
@@ -756,7 +756,7 @@ test("UI: the folder icon on an SSH tab switches that tab between the terminal a
 test("UI: the folder icon is hidden for hosts with files turned off", async () => {
   await ui.locator('button.host[data-host="nofiles"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
-  assert.equal(await ui.locator(".tab.active .tab-files").count(), 0);
+  assert.equal(await ui.locator(".tab.active .tab-files:not(.tab-x)").count(), 0);
   await ui.locator("#close-session").click();
 });
 
@@ -1033,7 +1033,12 @@ test("UI: the Sign-ins panel shows the other session and signs it out, closing i
 
 const openAccount = async (page: Page) => {
   await page.locator("#account-btn").click();
-  await page.locator("#acct").waitFor({ state: "visible" });
+  await page.locator("#page-account").waitFor({ state: "visible" });
+};
+
+const closeAccount = async (page: Page) => {
+  await page.locator("#acct-close").click();
+  await page.locator("#page-account").waitFor({ state: "hidden" });
 };
 
 const chooseSignOut = async (page: Page) => {
@@ -1044,53 +1049,57 @@ const chooseSignOut = async (page: Page) => {
 
 const isFocused = (page: Page, selector: string) => page.locator(selector).evaluate((el) => document.activeElement === el);
 
-test("UI: the avatar opens a large centred account modal with the display switch, the shortcuts, Close and Sign out", async () => {
-  assert.equal(await ui.locator("#acct").isVisible(), false);
+test("UI: the avatar opens the account as a tab with the display switch, the shortcuts, Close tab and Sign out", async () => {
+  assert.equal(await ui.locator("#page-account").isVisible(), false);
   await openAccount(ui);
-  const modal = ui.locator("#acct");
-  await sleep(350);
-  assert.equal(await modal.evaluate((el) => (el as HTMLDialogElement).matches(":modal")), true, "it is a real modal dialog");
-  assert.equal(await modal.getAttribute("aria-labelledby"), "acct-title");
-  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), "dialog");
+  const page = ui.locator("#page-account");
   assert.equal(await ui.locator("#acct-title").innerText(), "ui-user");
-  assert.match(await modal.innerText(), /Signed in with GitHub/);
-  const box = await modal.boundingBox();
-  const viewport = ui.viewportSize()!;
-  assert.ok(box && box.width > 500 && box.width <= 640.5, `the modal is large: ${box?.width}px wide`);
-  assert.ok(Math.abs(box.x + box.width / 2 - viewport.width / 2) < 2 && Math.abs(box.y + box.height / 2 - viewport.height / 2) < 2, `the modal is centred in the window: ${JSON.stringify({ box, viewport })}`);
-  const text = flatten(await modal.innerText());
+  assert.match(await page.innerText(), /Signed in with GitHub/);
+  assert.equal(await ui.locator("#tabs .tab.ptab").count(), 1, "the account has a page tab");
+  assert.match(await ui.locator("#tabs .tab.ptab").innerText(), /Account/);
+  const text = flatten(await page.innerText());
   assert.match(text, /display/i);
   assert.match(text, /Hide host addresses/);
   assert.match(text, /shortcuts/i);
   for (const entry of ["Toggle sidebar", "Search hosts", "Copy / paste", "Previous / next tab"]) assert.ok(text.includes(entry), entry);
   assert.match(text, /Ctrl Shift B|⌘ B/);
-  const toggle = modal.locator("#addr-toggle");
+  const toggle = page.locator("#addr-toggle");
   assert.equal(await toggle.getAttribute("role"), "switch");
   assert.equal(await toggle.getAttribute("aria-checked"), "false");
-  assert.deepEqual(await modal.locator(".acct-foot button").allInnerTexts(), ["Close", "Sign out"]);
+  assert.deepEqual(await page.locator(".acct-foot button").allInnerTexts(), ["Close tab", "Sign out"]);
+  assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), null);
   assert.equal(await ui.locator("#umenu").count(), 0, "the old popover menu is gone");
 });
 
-test("UI: Escape, the close button, Close and the backdrop all close the account modal and return focus to the avatar", async () => {
-  const modal = ui.locator("#acct");
-  assert.equal(await modal.isVisible(), true);
-  await ui.keyboard.press("Escape");
-  assert.equal(await modal.isVisible(), false);
-  assert.ok(await isFocused(ui, "#account-btn"), "focus returns to the avatar after Escape");
-  await openAccount(ui);
-  await ui.locator("#acct-x").click();
-  assert.equal(await modal.isVisible(), false);
-  await openAccount(ui);
+test("UI: the Close tab button closes the account tab, and the avatar opens it again without duplicating it", async () => {
+  const page = ui.locator("#page-account");
+  assert.equal(await page.isVisible(), true);
   await ui.locator("#acct-close").click();
-  assert.equal(await modal.isVisible(), false);
-  assert.ok(await isFocused(ui, "#account-btn"));
+  assert.equal(await page.isVisible(), false);
+  assert.equal(await ui.locator("#tabs .tab.ptab").count(), 0);
   await openAccount(ui);
-  await ui.mouse.click(8, 8);
-  assert.equal(await modal.isVisible(), false);
+  await ui.locator("#account-btn").click();
+  assert.equal(await ui.locator("#tabs .tab.ptab").count(), 1);
+  await closeAccount(ui);
+});
+
+test("UI: holding Shift turns the files button on a tab into a close button", async () => {
+  await ui.locator('button.host[data-host="plain"]').click();
+  await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);
+  const tabs = ui.locator("#tabs .tab:not(.ptab)");
+  const before = await tabs.count();
+  assert.ok(before >= 1);
+  await ui.keyboard.down("Shift");
+  assert.equal(await ui.evaluate(() => document.body.classList.contains("shift-held")), true);
+  await tabs.last().locator(".tab-files").click();
+  await ui.keyboard.up("Shift");
+  await until("tab closed", async () => (await tabs.count()) === before - 1);
+});
+
+test("UI: the Audit log tab is not offered to members", async () => {
   await openAccount(ui);
-  await modal.locator("h3").click();
-  assert.equal(await modal.isVisible(), true, "clicking inside the modal keeps it open");
-  await ui.keyboard.press("Escape");
+  assert.equal(await ui.locator("#acct-audit-sec").isVisible(), false);
+  await closeAccount(ui);
 });
 
 test("UI: the Hide host addresses switch hides the address line in the sidebar and is remembered", async () => {
@@ -1100,7 +1109,7 @@ test("UI: the Hide host addresses switch hides the address line in the sidebar a
   const toggle = ui.locator("#addr-toggle");
   await toggle.click();
   assert.equal(await toggle.getAttribute("aria-checked"), "true");
-  await ui.keyboard.press("Escape");
+  await closeAccount(ui);
   assert.equal(await addr.isVisible(), false, "the address line is hidden");
   assert.equal(await ui.locator('button.host[data-host="plain"] .name').isVisible(), true, "the host name stays");
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.hideAddr")), "1");
@@ -1110,7 +1119,7 @@ test("UI: the Hide host addresses switch hides the address line in the sidebar a
   await openAccount(ui);
   assert.equal(await ui.locator("#addr-toggle").getAttribute("aria-checked"), "true");
   await ui.locator("#addr-toggle").click();
-  await ui.keyboard.press("Escape");
+  await closeAccount(ui);
   assert.equal(await ui.locator('button.host[data-host="plain"] .addr').isVisible(), true);
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.hideAddr")), "0");
 });
@@ -1122,7 +1131,7 @@ test("UI: the Interface zoom stepper scales the page, is remembered, and resets"
   assert.equal(await ui.locator("#zoom-reset").textContent(), "120%");
   assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "1.2");
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.zoom")), "120");
-  await ui.keyboard.press("Escape");
+  await closeAccount(ui);
   await ui.goto(base + "/");
   await ui.waitForSelector("#hosts .host");
   assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "1.2", "the zoom survives a reload");
@@ -1131,7 +1140,7 @@ test("UI: the Interface zoom stepper scales the page, is remembered, and resets"
   assert.equal(await ui.locator("#zoom-reset").textContent(), "100%");
   assert.equal(await ui.evaluate(() => document.documentElement.style.zoom), "");
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.zoom")), "100");
-  await ui.keyboard.press("Escape");
+  await closeAccount(ui);
 });
 
 test("UI: Sign out asks first, and Cancel, Escape and the backdrop all keep the session", async () => {
@@ -1144,11 +1153,9 @@ test("UI: Sign out asks first, and Cancel, Escape and the backdrop all keep the 
   assert.equal(await ui.locator("#signout-text").innerText(), "Your open terminals will disconnect.");
   assert.deepEqual(await dialog.locator("button").allInnerTexts(), ["Cancel", "Sign out"]);
   assert.ok((await dialog.boundingBox())!.width <= 360.5);
-  assert.equal(await ui.locator("#acct").isVisible(), false, "the account modal closes when the confirmation opens");
 
   await ui.locator("#signout-cancel").click();
   assert.equal(await dialog.isVisible(), false);
-  assert.ok(await isFocused(ui, "#account-btn"));
 
   await chooseSignOut(ui);
   await ui.keyboard.press("Escape");
@@ -1167,6 +1174,7 @@ test("UI: Sign out asks first, and Cancel, Escape and the backdrop all keep the 
   await ui.keyboard.press("Tab");
   assert.ok(await isFocused(ui, "#signout-cancel"), "focus stays inside the dialog");
   await ui.keyboard.press("Escape");
+  await closeAccount(ui);
 
   assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200, "the session is untouched");
   assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0);
@@ -1292,7 +1300,7 @@ test("UI: screenshots (only when SMOKE_SCREENSHOTS names a folder)", { skip: !pr
   await sleep(300);
   await shot(ui, "4-desktop-account-modal.png");
   await ui.locator("#addr-toggle").click();
-  await ui.keyboard.press("Escape");
+  await closeAccount(ui);
   await sleep(200);
   await shot(ui, "5-desktop-host-addresses-hidden.png");
   await openAccount(ui);
@@ -1301,6 +1309,7 @@ test("UI: screenshots (only when SMOKE_SCREENSHOTS names a folder)", { skip: !pr
   await ui.locator("#signout-dialog").waitFor({ state: "visible" });
   await shot(ui, "6-desktop-sign-out-dialog.png");
   await ui.keyboard.press("Escape");
+  await closeAccount(ui);
   await closeAllTabs(ui);
 
   const { ctx: mobileCtx, page: mobile } = await phoneSignIn("ui-peer");
@@ -1325,7 +1334,6 @@ test("UI: screenshots (only when SMOKE_SCREENSHOTS names a folder)", { skip: !pr
   await openAccount(mobile);
   await sleep(300);
   await shot(mobile, "11-phone-account-modal.png");
-  await mobile.keyboard.press("Escape");
   await mobileCtx.close();
 });
 
@@ -1339,6 +1347,7 @@ test("UI: a failed sign out says so and keeps the page and session", async () =>
     await ui.locator("#signout-confirm").click();
     await until("failed signout notice", async () => /Sign out failed \(status 403\)\. You are still signed in/.test(await ui.locator("#notice").innerText()));
     assert.equal(await ui.getByRole("heading", { name: /Sign in to Shellport/ }).count(), 0, "the page must not reload to the sign-in page");
+    await closeAccount(ui);
     assert.match(await statusText(ui), /connected/, "the terminal must stay open");
     assert.equal((await getJson(`sp_sid=${sid}`, "/api/me")).status, 200);
   } finally {

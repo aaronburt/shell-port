@@ -28,7 +28,7 @@
     <div class="hosts" id="hosts"></div>
     <div class="rail-foot">
       <div class="me">
-        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" aria-haspopup="dialog" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
+        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
         <span class="who"><small id="me-login"></small><small class="role" id="me-role" hidden>admin</small></span>
       </div>
       <button class="btn ghost add-host" id="add-host" type="button" aria-label="Add host" title="Add host" hidden><b>+</b><span>Add host</span></button>
@@ -38,36 +38,11 @@
   <div class="main">
     <div class="term-wrap">
       <div class="terms" id="terms">
-        <button class="solo-chip" id="solo-chip" type="button" hidden></button>
-        <div class="dropzone" id="dropzone" hidden><span id="drop-label"></span></div>
-        <div class="empty" id="empty">
-          <span class="logo big">&gt;_</span>
-          <p>Pick a host from the sidebar to open a terminal.</p>
-        </div>
-      </div>
-      <aside class="drawer" id="drawer" aria-label="Session details">
-        <div class="drawer-body">
-          <div class="drawer-head"><h5>Session</h5></div>
-          <dl class="kv" id="kv"></dl>
-          <div class="drawer-head"><h5>Sign-ins</h5></div>
-          <div class="acts" id="signins"></div>
-          <div class="drawer-foot">
-            <button class="btn ghost" id="signout-others" type="button" hidden>Sign out others</button>
-            <button class="btn ghost" id="close-session" type="button" hidden>Close session</button>
-          </div>
-        </div>
-      </aside>
-    </div>
-    <div class="notice" id="notice" role="alert" hidden></div>
-  </div>
-</section>
-
-<dialog class="acct" id="acct" aria-labelledby="acct-title">
+        <div class="page acct" id="page-account" hidden>
   <div class="acct-body">
     <header class="acct-head">
       <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
       <div><h3 id="acct-title"></h3><small id="acct-via">Signed in with GitHub</small></div>
-      <button class="tool acct-x" id="acct-x" type="button" aria-label="Close account">×</button>
     </header>
     <section class="acct-sec">
       <h5>Display</h5>
@@ -117,6 +92,13 @@
         <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>
       </div>
     </section>
+    <section class="acct-sec" id="acct-audit-sec" hidden>
+      <h5>Audit log</h5>
+      <div class="acct-row">
+        <div><strong>Who connected, and when</strong><small>Sign-ins, SSH connections to each host, host and key changes, passkeys, failed unlocks and sealing. Opens in its own tab. Admins only.</small></div>
+        <button class="btn ghost" id="acct-audit" type="button">Open</button>
+      </div>
+    </section>
     <section class="acct-sec" id="acct-seal-sec" hidden>
       <h5>Server</h5>
       <div class="acct-row">
@@ -129,11 +111,42 @@
       <dl class="kv keys" id="keys"></dl>
     </section>
     <footer class="acct-foot">
-      <button class="btn ghost" id="acct-close" type="button">Close</button>
+      <button class="btn ghost" id="acct-close" type="button">Close tab</button>
       <button class="btn" id="acct-signout" type="button">Sign out</button>
     </footer>
   </div>
-</dialog>
+        </div>
+        <div class="page audit-page" id="page-audit" hidden>
+          <div class="aud-intro"><h3>Audit log</h3><small id="aud-status"></small></div>
+          <div id="aud-warn"></div>
+          <div class="aud-filters" id="aud-filters"></div>
+          <div class="aud-scroll"><div class="aud-table" id="aud-table" role="table" aria-label="Audit events"></div></div>
+          <div class="aud-foot" id="aud-foot"></div>
+        </div>
+        <button class="solo-chip" id="solo-chip" type="button" hidden></button>
+        <div class="dropzone" id="dropzone" hidden><span id="drop-label"></span></div>
+        <div class="empty" id="empty">
+          <span class="logo big">&gt;_</span>
+          <p>Pick a host from the sidebar to open a terminal.</p>
+        </div>
+      </div>
+      <aside class="drawer" id="drawer" aria-label="Session details">
+        <div class="drawer-body">
+          <div class="drawer-head"><h5>Session</h5></div>
+          <dl class="kv" id="kv"></dl>
+          <div class="drawer-head"><h5>Sign-ins</h5></div>
+          <div class="acts" id="signins"></div>
+          <div class="drawer-foot">
+            <button class="btn ghost" id="signout-others" type="button" hidden>Sign out others</button>
+            <button class="btn ghost" id="close-session" type="button" hidden>Close session</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <div class="notice" id="notice" role="alert" hidden></div>
+  </div>
+</section>
+
 
 <div class="scrim" id="signout-scrim" hidden>
   <div class="modal" id="signout-dialog" role="alertdialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-text">

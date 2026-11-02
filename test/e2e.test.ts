@@ -315,6 +315,10 @@ test("terminal round trip, resize and exit", async () => {
   await t.waitFor(() => lastWindow?.cols === 120 && lastWindow?.rows === 40);
   t.ws.send(Buffer.from("exit\r"), { binary: true });
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
+  const trail = app.auditLog.all({ type: "SSH connections", user: "aaronburt" });
+  assert.deepEqual([trail[0].kind, trail[1].kind], ["ssh_disconnect", "ssh_connect"]);
+  assert.match(trail[0].detail, /Lasted \d+ seconds/);
+  assert.ok(trail[1].ip && trail[1].host);
 });
 
 test("host key mismatch is refused", async () => {
@@ -322,6 +326,9 @@ test("host key mismatch is refused", async () => {
   const t = openWs(cookie, "wrongkey");
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
   assert.match(t.json.find((m) => m.t === "error").message, /Host key did not match/);
+  const failed = app.auditLog.all({ type: "fail" })[0];
+  assert.equal(failed.kind, "ssh_failed");
+  assert.match(failed.detail, /Host key did not match/);
 });
 
 test("bad credentials give a clear error", async () => {
@@ -381,6 +388,9 @@ test("three wrong passphrases close the terminal", async () => {
   }
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
   assert.match(t.json.find((m) => m.t === "error").message, /Incorrect passphrase/);
+  const wrong = app.auditLog.all({ user: "pp1" }).filter((e) => e.kind === "passphrase_failed");
+  assert.deepEqual(wrong.map((e) => e.detail).sort(), ["Attempt 1 of 3", "Attempt 2 of 3", "Attempt 3 of 3"]);
+  assert.ok(!JSON.stringify(app.auditLog.all({})).includes("nope"));
 });
 
 test("empty and oversized passphrases count as failed tries", async () => {
