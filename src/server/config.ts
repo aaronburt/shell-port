@@ -57,16 +57,37 @@ export interface AppConfig {
   hosts: HostConfig[];
 }
 
+export interface StoreIoLike {
+  read(): Record<string, unknown>;
+  write(raw: unknown): void;
+}
+
+export interface PasskeyRecord {
+  id: string;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+  name: string;
+  createdAt: number;
+  lastUsedAt?: number;
+  githubId: number;
+  login: string;
+  displayName?: string;
+  avatarUrl?: string;
+}
+
 export interface UserConfig {
   github: string | number;
   totpSecret: SecretRef;
   admin?: boolean;
+  passkeys?: PasskeyRecord[];
 }
 
 export interface LoadedUser {
   match: string;
   totpKey: Buffer;
   admin: boolean;
+  passkeys: PasskeyRecord[];
 }
 
 export interface LoadedConfig extends Omit<AppConfig, "users"> {
@@ -198,6 +219,26 @@ export function validateHost(h: HostConfig, baseDir: string, security: { allowUn
   if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
 }
 
+function validatePasskeys(list: unknown, what: string): PasskeyRecord[] {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) fail(`${what} passkeys must be an array`);
+  const seen = new Set<string>();
+  return list.map((p: any, i) => {
+    const at = `${what} passkeys[${i}]`;
+    if (!p || typeof p !== "object") fail(`${at} must be an object`);
+    if (typeof p.id !== "string" || !/^[A-Za-z0-9_-]{1,1024}$/.test(p.id)) fail(`${at}.id must be a base64url string`);
+    if (seen.has(p.id)) fail(`${at}.id is a duplicate`);
+    seen.add(p.id);
+    if (typeof p.publicKey !== "string" || !/^[A-Za-z0-9_-]+$/.test(p.publicKey)) fail(`${at}.publicKey must be a base64url string`);
+    if (!Number.isInteger(p.counter) || p.counter < 0) fail(`${at}.counter must be a non-negative integer`);
+    if (typeof p.name !== "string" || !p.name) fail(`${at}.name is required`);
+    if (!Number.isFinite(p.createdAt)) fail(`${at}.createdAt must be a timestamp`);
+    if (!Number.isInteger(p.githubId) || typeof p.login !== "string" || !p.login) fail(`${at} needs githubId and login`);
+    if (p.transports !== undefined && (!Array.isArray(p.transports) || p.transports.some((t: unknown) => typeof t !== "string"))) fail(`${at}.transports must be a list of strings`);
+    return p as PasskeyRecord;
+  });
+}
+
 export function validateConfig(raw: any, baseDir: string): LoadedConfig {
   const server = raw.server ?? {};
   const publicUrl = String(server.publicUrl ?? "").replace(/\/+$/, "");
@@ -217,7 +258,7 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
     try { totpKey = base32Decode(secret); } catch { fail(`users[${i}] totpSecret is not valid base32`); }
     if (totpKey.length < 16) fail(`users[${i}] totpSecret is too short (need at least 128 bits; use npm run totp)`);
     if (u.admin !== undefined && typeof u.admin !== "boolean") fail(`users[${i}] (${match}) admin must be true or false`);
-    return { match, totpKey, admin: u.admin === true };
+    return { match, totpKey, admin: u.admin === true, passkeys: validatePasskeys(u.passkeys, `users[${i}] (${match})`) };
   });
 
   const hosts: HostConfig[] = raw.hosts ?? [];

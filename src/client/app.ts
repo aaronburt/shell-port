@@ -5,12 +5,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { feedPassphrase } from "./passphrase.js";
 import { FilesPane } from "./files.js";
 import { initAddHost } from "./addhost.js";
+import { initPasskeys } from "./passkeys.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean }
+interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
-  session?: string; current?: boolean; active?: boolean; expiresAt?: number;
+  method?: "github" | "passkey"; session?: string; current?: boolean; active?: boolean; expiresAt?: number;
 }
 type State = "connecting" | "connected" | "closed";
 interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; cipher: string; hostKey: string; since: string }
@@ -605,7 +606,7 @@ function renderSignins() {
     const who = a.kind === "signin" ? (a.current ? "this browser" : a.active ? "other session" : "ended") : "";
     const rows: [string, string][] = [["When", new Date(a.at).toLocaleString()], ["From", a.ip || "unknown"]];
     if (a.kind === "signin") {
-      rows.push(["Session", a.session ?? "—"], ["Status", a.current ? "this browser" : a.active ? "active" : "ended"]);
+      rows.push(["Method", a.method === "passkey" ? "Passkey" : "GitHub + authenticator code"], ["Session", a.session ?? "—"], ["Status", a.current ? "this browser" : a.active ? "active" : "ended"]);
       if (a.active && a.expiresAt) rows.push(["Expires", new Date(a.expiresAt).toLocaleString()]);
     }
     return `<div class="act ${open ? "open" : ""}">
@@ -909,6 +910,8 @@ function renderMe(me: Me) {
   }
   $("me-login").textContent = me.login;
   $("acct-title").textContent = me.login;
+  $("acct-via").textContent = me.via === "passkey" ? "Signed in with a passkey" : "Signed in with GitHub";
+  passkeys.enable(!!me.canManagePasskeys);
   $("acct-seal-sec").hidden = !me.sealable;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;
@@ -917,6 +920,15 @@ function renderMe(me: Me) {
     if (me.expiresAt <= Date.now()) location.reload();
   }, 30_000);
 }
+
+const passkeys = initPasskeys({
+  section: $("acct-pk-sec"),
+  list: $("pk-list"),
+  addButton: $<HTMLButtonElement>("pk-add"),
+  scrim: $("pk-scrim"),
+  reopenAccount: () => acct.showModal(),
+  closeAccount: () => acct.close(),
+});
 
 const hostEditor = initAddHost({
   button: $("add-host"),
