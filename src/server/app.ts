@@ -264,6 +264,87 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.status(204).end();
   });
 
+  const unlocks = new ChallengeBook();
+  const unlockLimiter = new RateLimiter(cfg.limits.loginAttemptsPer15Min, 15 * 60_000);
+
+  const unlockFailed = (req: Request, res: Response, s: UserSession, how: "totp" | "passkey", reason: string) => {
+    s.totpFailures++;
+    audit("lock.unlock_failed", { ip: ipOf(req), user: s.login, githubId: s.githubId, method: how, reason, failures: s.totpFailures });
+    if (how === "totp") activity.add({ kind: "totp_failed", githubId: s.githubId, ip: ipOf(req) });
+    if (s.totpFailures >= MAX_TOTP_FAILURES) {
+      sessions.destroy(s.id);
+      res.setHeader("Set-Cookie", serializeCookie(SID, "", cookieOpts(0)));
+      return res.status(401).json({ error: "too_many_attempts" });
+    }
+    return res.status(400).json({ error: how === "totp" ? "invalid_code" : "passkey_failed", remaining: MAX_TOTP_FAILURES - s.totpFailures });
+  };
+
+  const unlockOk = (req: Request, res: Response, s: UserSession, how: "totp" | "passkey") => {
+    s.totpFailures = 0;
+    audit("lock.unlocked", { ip: ipOf(req), user: s.login, githubId: s.githubId, method: how });
+    res.status(204).end();
+  };
+
+  app.post("/api/lock/totp", requireSession, requireSameOrigin, express.json({ limit: "1kb" }), (req, res) => {
+    const s: UserSession = res.locals.session;
+    if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
+    const entry = findUser(cfg, who(s));
+    const code = String(req.body?.code ?? "").replace(/\s/g, "");
+    const counter = entry ? verifyTotp(entry.totpKey, code, opts.now?.() ?? Date.now()) : undefined;
+    if (counter === undefined || counter <= (lastTotpCounter.get(s.githubId) ?? -1)) return unlockFailed(req, res, s, "totp", "bad_code");
+    lastTotpCounter.set(s.githubId, counter);
+    unlockOk(req, res, s, "totp");
+  });
+
+  app.post("/api/lock/passkey/options", requireSession, requireSameOrigin, async (req, res) => {
+    const s: UserSession = res.locals.session;
+    if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
+    const user = findUser(cfg, who(s));
+    if (!user?.passkeys.length) return res.status(409).json({ error: "no_passkeys" });
+    const options = await generateAuthenticationOptions({
+      rpID: rpId,
+      userVerification: "required",
+      allowCredentials: user.passkeys.map((p) => ({ id: p.id, transports: p.transports as never })),
+      timeout: 120_000,
+    });
+    unlocks.put(options.challenge, s.id);
+    res.json(options);
+  });
+
+  app.post("/api/lock/passkey/verify", requireSession, requireSameOrigin, express.json({ limit: "16kb" }), async (req, res) => {
+    const s: UserSession = res.locals.session;
+    if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
+    const challenge = unlocks.take(s.id);
+    const response = req.body?.response;
+    if (!challenge || !response || typeof response !== "object" || typeof response.id !== "string") return unlockFailed(req, res, s, "passkey", "bad_request");
+    const user = findUser(cfg, who(s));
+    const passkey = user?.passkeys.find((p) => p.id === response.id);
+    if (!user || !passkey) return unlockFailed(req, res, s, "passkey", "unknown_credential");
+    let verified;
+    try {
+      verified = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: challenge,
+        expectedOrigin: cfg.server.publicUrl,
+        expectedRPID: rpId,
+        requireUserVerification: true,
+        credential: {
+          id: passkey.id,
+          publicKey: new Uint8Array(Buffer.from(passkey.publicKey, "base64url")),
+          counter: passkey.counter,
+          transports: passkey.transports as never,
+        },
+      });
+    } catch {
+      return unlockFailed(req, res, s, "passkey", "verification");
+    }
+    if (!verified.verified) return unlockFailed(req, res, s, "passkey", "not_verified");
+    passkey.counter = verified.authenticationInfo.newCounter;
+    passkey.lastUsedAt = Date.now();
+    try { opts.passkeyStore?.save(user.match, user.passkeys); } catch {}
+    unlockOk(req, res, s, "passkey");
+  });
+
   app.post("/auth/logout", requireSameOrigin, (req, res) => {
     const s = anySession(req.headers.cookie);
     if (s) {
