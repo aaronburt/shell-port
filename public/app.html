@@ -95,6 +95,7 @@
         <div><strong id="ap-label">Passphrase auto enter</strong><small>Remember the passphrase for each host after you type it once, and enter it for you next time. Stored only in this browser, encrypted with a key the browser cannot export. Never saved on the server.</small></div>
         <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
       </div>
+      <div class="alert ap-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg><div><b>Riskier option.</b> The passphrase is left in this browser's storage. Anyone who can use this browser profile while you are signed in, or run code in this page, can read it and unlock your SSH key. Only turn this on for a device you fully trust.</div></div>
       <div class="acct-row">
         <div><strong>Saved on this browser</strong><small id="ap-count">Nothing saved.</small><small>Saved passphrases are also forgotten when you sign out, and a saved one that stops working is discarded.</small></div>
         <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>

@@ -50,6 +50,7 @@ interface Tab {
   filesFor?: string;
   solo?: boolean;
   stash: HTMLDivElement;
+  wantPath?: string;
 }
 
 type Zone = "left" | "right" | "top" | "bottom";
@@ -242,8 +243,35 @@ let dragKey: string | undefined;
 
 const canBrowse = (t: Tab) => { const p = filesPane(t); return !!p && p.info?.files !== false; };
 
+function syncUrl() {
+  const q = new URLSearchParams();
+  for (const t of tabs) {
+    const p = t.mode === "files" ? t.files.cwd : t.wantPath;
+    const id = t.mode === "files" ? (filesPane(t)?.host ?? t.host).id : t.host.id;
+    q.append("open", p ? `${id}:${p}` : id);
+  }
+  const s = q.toString();
+  try { history.replaceState(null, "", location.pathname + (s ? `?${s}` : "")); } catch {}
+}
+
+function openFromUrl() {
+  for (const v of new URLSearchParams(location.search).getAll("open")) {
+    const i = v.indexOf(":");
+    const id = i < 0 ? v : v.slice(0, i);
+    const path = i < 0 ? "" : v.slice(i + 1);
+    const h = hosts.find((x) => x.id === id);
+    if (!h) continue;
+    openTab(h);
+    if (path.startsWith("/")) tabs[tabs.length - 1].wantPath = path;
+  }
+  const first = tabs[0];
+  if (first) activate(first);
+  syncUrl();
+}
+
 function setMode(tab: Tab, mode: Tab["mode"]) {
   tab.mode = mode;
+  syncUrl();
   if (tab !== active) return activate(tab);
   applyMode();
   renderTabs();
@@ -343,6 +371,7 @@ function openTab(h: Host) {
       const host = fp?.host ?? tab.host;
       return `${fp?.info?.user ?? host.addr.split("@")[0]}@${host.addr.split("@").slice(1).join("@")}`;
     },
+    onPath: syncUrl,
   });
   tab.stash = document.createElement("div");
   tab.stash.className = "stash";
@@ -357,6 +386,7 @@ function openTab(h: Host) {
   activate(tab);
   pane.fit.fit();
   connect(pane);
+  syncUrl();
 }
 
 const GRIP = `<svg class="grip" viewBox="0 0 10 16" width="8" height="12" fill="currentColor" aria-hidden="true"><circle cx="2" cy="3" r="1.2"/><circle cx="8" cy="3" r="1.2"/><circle cx="2" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="2" cy="13" r="1.2"/><circle cx="8" cy="13" r="1.2"/></svg>`;
@@ -853,6 +883,12 @@ function connect(pane: Pane) {
         }
       }
       leaveFilesIfGone(pane.tab);
+      const t = pane.tab;
+      if (msg.state === "connected" && t.wantPath && canBrowse(t)) {
+        t.files.initial = t.wantPath;
+        t.wantPath = undefined;
+        setMode(t, "files");
+      }
       refresh(pane);
     }
   };
@@ -906,6 +942,7 @@ function closeTab(tab: Tab) {
   for (const p of panesOf(tab)) disposePane(p);
   tab.files.dispose();
   tab.layout.remove();
+  syncUrl();
   if (active === tab) {
     active = tabs[Math.min(i, tabs.length - 1)];
     if (active) return activate(active);
@@ -1308,4 +1345,5 @@ $("close-session").onclick = () => {
   hosts = hs;
   renderMe(me);
   renderAll();
+  openFromUrl();
 })();
