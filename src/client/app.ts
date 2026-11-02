@@ -6,6 +6,7 @@ import { feedPassphrase } from "./passphrase.js";
 import { FilesPane } from "./files.js";
 import { initAddHost } from "./addhost.js";
 import { initPasskeys } from "./passkeys.js";
+import { initLock } from "./lock.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
@@ -1048,6 +1049,7 @@ $("keys").innerHTML = [
   ["Alt Shift D", "Add another session of this host"],
   ["Alt Shift ← / →", "Previous / next session in the view"],
   ["Alt Shift W", "Close session"],
+  ["Alt Shift L", "Lock the screen"],
 ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
@@ -1083,9 +1085,13 @@ function handleTermKey(e: KeyboardEvent, pane: Pane): boolean {
   return !runShortcut(e, (isMac && e.metaKey) || (e.ctrlKey && e.shiftKey));
 }
 
+let lock: ReturnType<typeof initLock> | undefined;
+
 function runShortcut(e: KeyboardEvent, primary: boolean): boolean {
   const k = e.key.toLowerCase();
-  if (primary && k === "b") toggleRail();
+  if (lock?.isLocked()) return false;
+  if (e.altKey && e.shiftKey && e.code === "KeyL") lock?.lock();
+  else if (primary && k === "b") toggleRail();
   else if (primary && k === "k") focusSearch();
   else if (e.altKey && e.shiftKey && e.code === "KeyD") { if (active) addSession(active.focus.host); }
   else if (e.altKey && e.shiftKey && e.code === "KeyW") { if (active && active.mode === "term") closePane(active.focus); }
@@ -1188,20 +1194,30 @@ scrim.addEventListener("keydown", (e) => {
   }
 });
 
+function leave(url: string) {
+  for (const t of tabs) for (const p of panesOf(t)) p.ws?.close();
+  tabs = [];
+  try { localStorage.removeItem("sp.locked"); } catch {}
+  location.replace(url);
+}
+
+async function signOut(): Promise<string | undefined> {
+  const r = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+  if (!r?.ok) return `Sign out failed (${failure(r)}). You are still signed in.`;
+  await forgetAllPassphrases().catch(() => {});
+  leave("/");
+  return undefined;
+}
+
 $("signout-confirm").onclick = async () => {
   const confirm = $<HTMLButtonElement>("signout-confirm");
   confirm.disabled = true;
-  const r = await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
-  if (r?.ok) await forgetAllPassphrases().catch(() => {});
+  const err = await signOut();
   confirm.disabled = false;
-  if (!r?.ok) {
+  if (err) {
     closeSignOutDialog();
-    notify(`Sign out failed (${failure(r)}). You are still signed in.`);
-    return;
+    notify(err);
   }
-  for (const t of tabs) for (const p of panesOf(t)) p.ws?.close();
-  tabs = [];
-  location.replace("/");
 };
 
 const apSection = $("acct-ap-sec");
@@ -1290,9 +1306,11 @@ function initialsOf(name: string, login: string): string {
 }
 
 let scope = "";
+let lockScope = "";
 
 function renderMe(me: Me) {
   scope = me.login;
+  lockScope = `${me.login}:${me.expiresAt}`;
   apSection.hidden = !passSupported();
   renderAutoPass();
   const avatar = me.avatarUrl && me.avatarUrl.startsWith("https://avatars.githubusercontent.com/") ? me.avatarUrl : "";
@@ -1330,6 +1348,22 @@ const passkeys = initPasskeys({
   closeAccount: () => acct.close(),
 });
 
+lock = initLock({
+  sessions: () => tabs.flatMap((t) => panesOf(t)).map((p) => ({ name: p.host.name, state: p.state })),
+  beforeLock: () => {
+    setLayoutOpen(false);
+    if (acct.open) acct.close();
+    closeSignOutDialog();
+  },
+  afterUnlock: () => {
+    requestAnimationFrame(fitActive);
+    if (active && active.mode === "term") active.focus.term.focus();
+  },
+  signOut,
+  leave,
+  scope: () => lockScope,
+});
+
 const hostEditor = initAddHost({
   button: $("add-host"),
   scrim: $("host-scrim"),
@@ -1363,4 +1397,5 @@ $("close-session").onclick = () => {
   renderMe(me);
   renderAll();
   openFromUrl();
+  lock?.resume();
 })();

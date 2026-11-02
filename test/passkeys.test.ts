@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { validateConfig, type PasskeyRecord } from "../src/server/config.js";
-import { base32Encode } from "../src/server/totp.js";
+import { base32Decode, base32Encode, hotp } from "../src/server/totp.js";
 import { createApp } from "../src/server/app.js";
 import type { PasskeyStore } from "../src/server/passkeys.js";
 
@@ -59,6 +59,7 @@ let saved: PasskeyRecord[] = [];
 let saves = 0;
 let failSave = false;
 let nextUser = "aaronburt";
+let totpSecret = "";
 const store: PasskeyStore = {
   kind: "file",
   save: (_match, list) => {
@@ -75,6 +76,7 @@ before(async () => {
   await new Promise((r) => probe.close(r));
   base = `http://127.0.0.1:${port}`;
   const secret = base32Encode(crypto.randomBytes(20));
+  totpSecret = secret;
   const cfg = validateConfig({
     server: { port, publicUrl: base },
     github: { clientId: "id", clientSecret: "secret" },
@@ -302,4 +304,87 @@ test("passkey sign-in records the method and signing in again replaces any stale
   const r = await fetch(`${base}/auth/passkey/verify`, json(cookie, { challengeId: o.challengeId, response: key.get(o.options) }));
   assert.equal(r.status, 204);
   assert.equal((await fetch(`${base}/api/me`, { headers: { cookie } })).status, 401);
+});
+
+const codeNow = (offset = 0) => hotp(base32Decode(totpSecret), Math.floor(Date.now() / 30_000) + offset);
+const lockPost = (path: string, cookie: string, body?: unknown) => fetch(`${base}/api/lock/${path}`, json(cookie, body ?? {}));
+
+test("lock endpoints need a fully signed-in session and a same-origin request", async () => {
+  assert.equal((await lockPost("totp", "", { code: "123456" })).status, 401);
+  assert.equal((await lockPost("passkey/options", "")).status, 401);
+  assert.equal((await lockPost("passkey/verify", "", {})).status, 401);
+  const pending = await githubPending("aaronburt");
+  assert.equal((await lockPost("totp", pending, { code: codeNow() })).status, 401);
+  const cookie = await fullSession("aaronburt");
+  const cross = await fetch(`${base}/api/lock/totp`, { method: "POST", headers: { cookie, origin: "https://evil.example", "content-type": "application/json" }, body: JSON.stringify({ code: codeNow() }) });
+  assert.equal(cross.status, 403);
+});
+
+test("unlocking with the authenticator code works once per code and rejects wrong codes", async () => {
+  const cookie = await fullSession("aaronburt");
+  const bad = await lockPost("totp", cookie, { code: "000000" });
+  assert.equal(bad.status, 400);
+  assert.deepEqual(await bad.json(), { error: "invalid_code", remaining: 4 });
+  const letters = await lockPost("totp", cookie, { code: "abcdef" });
+  assert.equal(letters.status, 400);
+  const good = codeNow();
+  const ok = await lockPost("totp", cookie, { code: ` ${good.slice(0, 3)} ${good.slice(3)} ` });
+  assert.equal(ok.status, 204);
+  const replay = await lockPost("totp", cookie, { code: good });
+  assert.equal(replay.status, 400);
+  assert.equal((await fetch(`${base}/api/me`, { headers: { cookie } })).status, 200);
+  const signins = await (await fetch(`${base}/api/signins`, { headers: { cookie } })).json();
+  assert.ok(signins.items.some((i: any) => i.kind === "totp_failed"));
+});
+
+test("five wrong unlock codes end the session", async () => {
+  const cookie = await fullSession("other");
+  for (let i = 4; i >= 1; i--) {
+    const r = await lockPost("totp", cookie, { code: "000000" });
+    assert.equal(r.status, 400);
+    assert.equal((await r.json()).remaining, i);
+  }
+  const last = await lockPost("totp", cookie, { code: "000000" });
+  assert.equal(last.status, 401);
+  assert.equal((await last.json()).error, "too_many_attempts");
+  assert.equal((await fetch(`${base}/api/me`, { headers: { cookie } })).status, 401);
+});
+
+test("a correct unlock resets the failure count", async () => {
+  const cookie = await fullSession("other");
+  for (let i = 0; i < 3; i++) assert.equal((await lockPost("totp", cookie, { code: "000000" })).status, 400);
+  assert.equal((await lockPost("totp", cookie, { code: codeNow() })).status, 204);
+  const r = await lockPost("totp", cookie, { code: "000000" });
+  assert.equal((await r.json()).remaining, 4);
+});
+
+test("unlocking with a passkey only accepts that user's own passkeys, once per challenge", async () => {
+  const cookie = await fullSession("aaronburt");
+  const key = new SoftKey(base, rp());
+  const { res } = await register(cookie, key, "Lock key");
+  assert.equal(res.status, 201);
+
+  const o = await lockPost("passkey/options", cookie);
+  assert.equal(o.status, 200);
+  const options = await o.json();
+  assert.equal(options.userVerification, "required");
+  assert.ok(options.allowCredentials.some((c: any) => c.id === b64u(key.id)));
+  const ok = await lockPost("passkey/verify", cookie, { response: key.get(options) });
+  assert.equal(ok.status, 204);
+  const again = await lockPost("passkey/verify", cookie, { response: key.get(options) });
+  assert.equal(again.status, 400);
+
+  const o2 = await (await lockPost("passkey/options", cookie)).json();
+  const stranger = new SoftKey(base, rp());
+  const forged = await lockPost("passkey/verify", cookie, { response: stranger.get(o2) });
+  assert.equal(forged.status, 400);
+  const wrongOrigin = await lockPost("passkey/verify", cookie, { response: key.get(o2, { origin: "https://evil.example" }) });
+  assert.equal(wrongOrigin.status, 400);
+
+  const otherCookie = await fullSession("other");
+  const theirs = await lockPost("passkey/options", otherCookie);
+  assert.ok(![...(await theirs.json()).allowCredentials ?? []].some((c: any) => c.id === b64u(key.id)));
+  const o3 = await (await lockPost("passkey/options", cookie)).json();
+  const crossUser = await lockPost("passkey/verify", otherCookie, { response: key.get(o3) });
+  assert.equal(crossUser.status, 400);
 });
