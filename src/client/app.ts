@@ -74,6 +74,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 let hosts: Host[] = [];
 let canEdit = false;
+let isAdmin = false;
 let tabs: Tab[] = [];
 let active: Tab | undefined;
 type PageKind = "audit" | "account" | "recording";
@@ -309,12 +310,16 @@ function syncUrl() {
     const arr = ps.length > 1 ? (t.solo ? "single" : t.arr) : undefined;
     q.append("open", `${arr ? `${arr}!` : ""}${ids.join(",")}${p ? `:${p}` : ""}`);
   }
+  for (const p of pages) if (p.kind !== "recording") q.append("page", p.kind);
   const s = q.toString();
   try { history.replaceState(null, "", location.pathname + (s ? `?${s}` : "")); } catch {}
 }
 
 function openFromUrl() {
-  for (const v of new URLSearchParams(location.search).getAll("open")) {
+  const params = new URLSearchParams(location.search);
+  const kinds = [...new Set(params.getAll("page"))]
+    .filter((k): k is PageKind => k === "account" || (k === "audit" && isAdmin));
+  for (const v of params.getAll("open")) {
     const c = v.indexOf(":");
     const head = c < 0 ? v : v.slice(0, c);
     const path = c < 0 ? "" : v.slice(c + 1);
@@ -328,8 +333,10 @@ function openFromUrl() {
     for (const h of list.slice(1)) addSession(h);
     if (ARRANGEMENTS.includes(arr as Arrangement) && list.length > 1) arrange(arr as Arrangement);
   }
+  kinds.forEach(pageFor);
   const first = tabs[0];
   if (first) activate(first);
+  if (kinds[0]) openPage(kinds[0]);
   syncUrl();
 }
 
@@ -1280,17 +1287,23 @@ const recordingView = initRecordingPage($("page-recording"), {
   },
 });
 
-function openPage(kind: PageKind) {
+function pageFor(kind: PageKind): Page {
   let p = pages.find((x) => x.kind === kind);
   if (!p) {
     p = { kind, title: kind === "audit" ? "Audit log" : "Account", el: $(`page-${kind}`) };
     pages.push(p);
   }
+  return p;
+}
+
+function openPage(kind: PageKind) {
+  const p = pageFor(kind);
   $("ws").classList.remove("rail-open");
   activePage = p;
   if (kind === "audit") auditView.show();
   renderAll();
   applyMode();
+  syncUrl();
 }
 
 function closePage(p: Page) {
@@ -1300,6 +1313,7 @@ function closePage(p: Page) {
   p.el.hidden = true;
   if (p.kind === "recording") recordingView.close();
   if (activePage === p) activePage = pages[i] ?? pages[i - 1];
+  syncUrl();
   renderAll();
   applyMode();
   shown()?.focus.term.focus();
@@ -1494,6 +1508,7 @@ function renderMe(me: Me) {
   $<HTMLAnchorElement>("acct-release-notes").href = me.releaseNotesUrl;
   passkeys.enable(!!me.canManagePasskeys);
   $("acct-seal-sec").hidden = !me.sealable;
+  isAdmin = !!me.admin;
   $("acct-audit-sec").hidden = !me.admin;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;

@@ -234,6 +234,7 @@ jobs:
       - run: npm ci
       - run: npx playwright-core install --with-deps chromium
       - run: npm run smoke:full
+      - run: npm run smoke:pages
 
   release:
     needs: [version, check, docker, smoke]
