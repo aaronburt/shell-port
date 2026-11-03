@@ -10,6 +10,14 @@ import { RateLimiter } from "../src/server/sessions.js";
 import { base32Encode } from "../src/server/totp.js";
 import { validateSetupConfig, isPathWritable, createSetupApp } from "../src/server/setup.js";
 import { generateEd25519 } from "./keys.js";
+import { releaseNotesUrl } from "../src/server/version.js";
+
+test("release versions link to their matching GitHub notes and development builds link to all releases", () => {
+  assert.equal(releaseNotesUrl("v0.48"), "https://github.com/aaronburt/shell-port/releases/tag/v0.48");
+  assert.equal(releaseNotesUrl("v1.2.3"), "https://github.com/aaronburt/shell-port/releases/tag/v1.2.3");
+  for (const version of ["development", "v0.47-1-gabcdef-dirty", "0.1.0 (development)", "v0.48/../../issues"])
+    assert.equal(releaseNotesUrl(version), "https://github.com/aaronburt/shell-port/releases");
+});
 
 const type = (current: string, ...chunks: string[]) => {
   let value = current;

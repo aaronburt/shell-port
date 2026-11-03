@@ -16,6 +16,7 @@ import { audit } from "./log.js";
 import { ActivityLog, sidTag } from "./activity.js";
 import { AuditLog, AUDIT_GROUPS, AUDIT_KINDS, auditCsv, type AuditKind } from "./auditlog.js";
 import * as files from "./sftp.js";
+import { BUILD_VERSION, releaseNotesUrl } from "./version.js";
 
 const PERMISSIONS_POLICY = [
   "accelerometer", "autoplay", "bluetooth", "camera", "display-capture", "geolocation", "gyroscope",
@@ -368,7 +369,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   app.get("/api/me", requireSession, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ via: s.method, canManagePasskeys: !!opts.passkeyStore, login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)) });
+    res.json({ via: s.method, canManagePasskeys: !!opts.passkeyStore, login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)), version: BUILD_VERSION, releaseNotesUrl: releaseNotesUrl(BUILD_VERSION) });
   });
 
   if (opts.onSeal) {

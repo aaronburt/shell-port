@@ -12,7 +12,7 @@ import { initAccountHelp } from "./account-help.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
-interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean }
+interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean; version: string; releaseNotesUrl: string }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   method?: "github" | "passkey"; session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -1407,6 +1407,8 @@ function renderMe(me: Me) {
   $("me-login").textContent = me.login;
   $("acct-title").textContent = me.login;
   $("acct-via").textContent = me.via === "passkey" ? "Signed in with a passkey" : "Signed in with GitHub";
+  $("acct-version").textContent = me.version;
+  $<HTMLAnchorElement>("acct-release-notes").href = me.releaseNotesUrl;
   passkeys.enable(!!me.canManagePasskeys);
   $("acct-seal-sec").hidden = !me.sealable;
   $("acct-audit-sec").hidden = !me.admin;
