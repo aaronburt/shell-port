@@ -64,6 +64,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .tab .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .tab .dot.connecting { background: var(--warn); }
 .tab .dot.closed { background: var(--bad); }
+.tab .dot.rec { width: 8px; height: 8px; background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent); }
 .tab .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .tool[aria-pressed="true"] { color: var(--accent); }
 @media (min-width: 761px) { .ws:not(.collapsed) .rail-toggle { color: var(--accent); } }
@@ -411,7 +412,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .rec-row .btn { padding: 4px 10px; font-size: 12.5px; }
 .rec-link { color: var(--accent); text-decoration: none; }
 .rec-link:hover { text-decoration: underline; }
-.rec-badge { flex: none; font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: .08em; line-height: 14px; padding: 0 5px; border-radius: 4px; color: #fff; background: var(--bad); }
 .rec-page .rec-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .rec-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .rec-actions .btn { padding: 7px 12px; }

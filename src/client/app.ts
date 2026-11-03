@@ -132,6 +132,12 @@ function tabState(t: Tab): State {
   return ps.some((p) => p.state === "connected") ? "connected" : ps.some((p) => p.state === "connecting") ? "connecting" : "closed";
 }
 
+function tabDot(t: Tab): string {
+  const s = tabState(t);
+  if (s !== "connected") return s;
+  return panesOf(t).some((p) => p.state === "connected" && p.info?.recording) ? "rec" : "";
+}
+
 function filesPane(t: Tab): Pane | undefined {
   return [t.focus, ...panesOf(t)].find((p) => p.state === "connected" && !!p.info?.id);
 }
@@ -283,7 +289,7 @@ function renderTabs() {
     : `<span class="tab-files tab-x" role="button" tabindex="0" data-tabclose="${t.key}" aria-label="Close ${esc(t.title)}" title="Close tab (hold Shift)">${X_ICON}</span>`;
   el.innerHTML = tabs.map((t) => `
     <button role="tab" aria-selected="${front(t)}" class="tab ${front(t) ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${tabState(t)}" title="${esc(t.host.addr)}">
-      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${t.focus.info?.recording ? `<span class="rec-badge" title="This session is recorded (terminal output only)">REC</span>` : ""}${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${closer(t)}
+      <span class="dot ${tabDot(t)}"${tabDot(t) === "rec" ? ` role="img" aria-label="Recording" title="Recording (terminal output only)"` : ""}></span><span class="name">${esc(t.title)}</span>${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${closer(t)}
     </button>`).join("") + pages.map((p) => `
     <button role="tab" aria-selected="${p === activePage}" class="tab ptab ${p === activePage ? "active" : ""}" data-page="${p.kind}" title="${p.title}">
       ${PAGE_ICONS[p.kind]}<span class="name">${p.title}</span><span class="tab-files tab-x" role="button" tabindex="0" data-pageclose="${p.kind}" aria-label="Close ${p.title}" title="Close tab (hold Shift)">${X_ICON}</span>
