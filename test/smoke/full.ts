@@ -1040,7 +1040,7 @@ const openAccount = async (page: Page) => {
 };
 
 const closeAccount = async (page: Page) => {
-  await page.locator("#acct-close").click();
+  await page.evaluate(() => (document.querySelector(".tab.ptab[data-page=account] .tab-files") as HTMLElement).click());
   await page.locator("#page-account").waitFor({ state: "hidden" });
 };
 
@@ -1052,7 +1052,7 @@ const chooseSignOut = async (page: Page) => {
 
 const isFocused = (page: Page, selector: string) => page.locator(selector).evaluate((el) => document.activeElement === el);
 
-test("UI: the avatar opens the account as a tab with the display switch, the shortcuts, Close tab and Sign out", async () => {
+test("UI: the avatar opens the account as a tab with the display switch, the shortcuts and Sign out", async () => {
   assert.equal(await ui.locator("#page-account").isVisible(), false);
   await openAccount(ui);
   const page = ui.locator("#page-account");
@@ -1067,11 +1067,11 @@ test("UI: the avatar opens the account as a tab with the display switch, the sho
     assert.equal(await page.locator(`#${id}`).getAttribute("target"), "_blank");
     assert.match((await page.locator(`#${id}`).getAttribute("rel"))!, /noopener/);
   }
-  const accountWidth = await page.evaluate((el) => ({
+  const column = await page.evaluate((el) => ({
     available: el.clientWidth,
     content: el.querySelector(".acct-body")!.getBoundingClientRect().width,
   }));
-  assert.ok(Math.abs(accountWidth.content - accountWidth.available) < 2, `account content fills the available width: ${JSON.stringify(accountWidth)}`);
+  assert.ok(column.content <= 681 && column.content > 0, `account content is a capped column: ${JSON.stringify(column)}`);
   assert.equal(await ui.locator("#tabs .tab.ptab").count(), 1, "the account has a page tab");
   assert.match(await ui.locator("#tabs .tab.ptab").innerText(), /Account/);
   const text = flatten(await page.innerText());
@@ -1083,15 +1083,16 @@ test("UI: the avatar opens the account as a tab with the display switch, the sho
   const toggle = page.locator("#addr-toggle");
   assert.equal(await toggle.getAttribute("role"), "switch");
   assert.equal(await toggle.getAttribute("aria-checked"), "false");
-  assert.deepEqual(await page.locator(".acct-foot button").allInnerTexts(), ["Close tab", "Sign out"]);
+  assert.equal(await page.locator("#acct-signout").innerText(), "Sign out");
+  assert.equal(await page.locator(".acct-foot").count(), 0, "Sign out moved to the header");
   assert.equal(await ui.locator("#account-btn").getAttribute("aria-haspopup"), null);
   assert.equal(await ui.locator("#umenu").count(), 0, "the old popover menu is gone");
 });
 
-test("UI: the Close tab button closes the account tab, and the avatar opens it again without duplicating it", async () => {
+test("UI: closing the account tab works, and the avatar opens it again without duplicating it", async () => {
   const page = ui.locator("#page-account");
   assert.equal(await page.isVisible(), true);
-  await ui.locator("#acct-close").click();
+  await ui.evaluate(() => (document.querySelector(".tab.ptab[data-page=account] .tab-files") as HTMLElement).click());
   assert.equal(await page.isVisible(), false);
   assert.equal(await ui.locator("#tabs .tab.ptab").count(), 0);
   await openAccount(ui);
@@ -1118,14 +1119,14 @@ test("UI: the theme and terminal theme pickers change the page and open terminal
   await ui.locator('[data-ui-theme="system"]').click();
   assert.equal(await root.getAttribute("data-theme"), null);
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.theme")), "system");
-  await ui.locator("#term-theme").selectOption("paper");
+  await ui.locator("#term-theme [data-term=paper]").click();
   assert.equal(await root.getAttribute("data-term"), "paper");
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "paper");
   if (await ui.locator(".pane .xterm-viewport").count()) {
     const viewport = ui.locator(".pane .xterm-viewport").first();
     assert.equal(await viewport.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(251, 250, 246)");
   }
-  await ui.locator("#term-theme").selectOption("shellport");
+  await ui.locator("#term-theme [data-term=shellport]").click();
   assert.equal(await root.getAttribute("data-term"), null);
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "shellport");
   await closeAccount(ui);
