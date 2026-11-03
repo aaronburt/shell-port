@@ -14,6 +14,7 @@ interface Form {
   host: string;
   port: string;
   user: string;
+  via: string;
   keyId: string;
   file?: { name: string; pem: string; encrypted: boolean };
   ack: boolean;
@@ -26,6 +27,7 @@ export interface AddHostOptions {
   button: HTMLElement;
   scrim: HTMLElement;
   groups: () => string[];
+  hosts: () => Array<{ id: string; name: string; addr: string; via?: string }>;
   onChanged: () => Promise<void>;
   restoreFocus: () => void;
 }
@@ -63,6 +65,8 @@ export function initAddHost(opts: AddHostOptions) {
     form.host = v("host");
     form.port = v("port");
     form.user = v("user");
+    const via = scrim.querySelector<HTMLSelectElement>("#ah-via");
+    if (via) form.via = via.value;
     const key = scrim.querySelector<HTMLSelectElement>("#ah-key");
     if (key) form.keyId = key.value;
   };
@@ -99,6 +103,8 @@ export function initAddHost(opts: AddHostOptions) {
       ? `<div class="alert full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg><div>This key has no passphrase. Anyone who signs in to Shellport can connect to this host without typing one.<label class="check"><input type="checkbox" id="ah-ack" ${form.ack ? "checked" : ""}> I understand, save it without a passphrase</label></div></div>`
       : "";
     const groups = opts.groups().map((g) => `<option value="${esc(g)}"></option>`).join("");
+    const bastions = opts.hosts().filter((h) => h.id !== form.editId && !h.via);
+    const routeOptions = [`<option value="">Direct</option>`, ...bastions.map((h) => `<option value="${esc(h.id)}" ${h.id === form.via ? "selected" : ""}>${esc(h.name)} (${esc(h.addr)})</option>`)].join("");
     const seg = (m: Form["mode"], label: string) => `<button type="button" data-mode="${m}" aria-pressed="${form.mode === m}">${label}</button>`;
     scrim.innerHTML = `<form class="modal wide" id="ah-form" role="dialog" aria-modal="true" aria-labelledby="ah-title" novalidate>
       <h3 id="ah-title">${editing ? "Edit host" : "Add host"}</h3>
@@ -109,6 +115,7 @@ export function initAddHost(opts: AddHostOptions) {
         <div class="field"><label for="ah-host">Host or IP</label><input id="ah-host" value="${esc(form.host)}" placeholder="10.0.1.14" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
         <div class="field"><label for="ah-port">Port</label><input id="ah-port" value="${esc(form.port)}" inputmode="numeric" autocomplete="off"></div>
         <div class="field full"><label for="ah-user">User</label><input id="ah-user" value="${esc(form.user)}" placeholder="deploy" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div class="field full"><label for="ah-via">Connect via</label><select id="ah-via">${routeOptions}</select><span class="hint">Connects through this host first, with its own key. Both hops are logged.</span></div>
         <div class="field full"><label id="ah-src-label">Key</label><div class="seg" role="group" aria-labelledby="ah-src-label">${editing ? seg("keep", keepLabel) : ""}${seg("existing", "Use existing key")}${seg("upload", "Upload new key")}</div></div>
         ${keyPart}
         ${warn}
@@ -135,7 +142,7 @@ export function initAddHost(opts: AddHostOptions) {
     }
   };
 
-  const blank = (): Form => ({ mode: "existing", name: "", group: "", host: "", port: "22", user: "", keyId: keys[0]?.id ?? "", ack: false, error: "", busy: false, confirmDelete: false });
+  const blank = (): Form => ({ mode: "existing", name: "", group: "", host: "", port: "22", user: "", via: "", keyId: keys[0]?.id ?? "", ack: false, error: "", busy: false, confirmDelete: false });
 
   const show = () => {
     render();
@@ -152,7 +159,7 @@ export function initAddHost(opts: AddHostOptions) {
 
   const edit = async (id: string) => {
     await fetchKeys();
-    let d: { name: string; group: string; host: string; port: number; username: string; auth: Current["auth"] } | undefined;
+    let d: { name: string; group: string; host: string; port: number; username: string; via: string; auth: Current["auth"] } | undefined;
     try {
       const r = await fetch(`/api/hosts/${encodeURIComponent(id)}`, { credentials: "same-origin" });
       if (r.status === 401) { location.reload(); return; }
@@ -160,7 +167,7 @@ export function initAddHost(opts: AddHostOptions) {
     } catch {}
     if (!d) return;
     hostName = d.name;
-    form = { ...blank(), editId: id, current: { group: d.group, auth: d.auth }, mode: "keep", name: d.name, group: d.group, host: d.host, port: String(d.port), user: d.username };
+    form = { ...blank(), editId: id, current: { group: d.group, auth: d.auth }, mode: "keep", name: d.name, group: d.group, host: d.host, port: String(d.port), user: d.username, via: d.via };
     show();
   };
 
@@ -195,7 +202,7 @@ export function initAddHost(opts: AddHostOptions) {
         method: form.editId ? "PUT" : "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, group: form.group.trim(), host, port, username: user, key, allowNoPassphrase: form.ack }),
+        body: JSON.stringify({ name, group: form.group.trim(), host, port, username: user, via: form.via, key, allowNoPassphrase: form.ack }),
       });
     } catch {}
     if (!(await finish(res, fail, `Could not ${form.editId ? "save the host" : "add the host"}. Check your connection and try again.`))) return;
@@ -244,6 +251,7 @@ export function initAddHost(opts: AddHostOptions) {
   scrim.addEventListener("change", (e) => {
     const t = e.target as HTMLInputElement;
     if (t.id === "ah-key") { sync(); form.ack = false; form.error = ""; render(); }
+    else if (t.id === "ah-via") sync();
     else if (t.id === "ah-ack") { sync(); form.ack = t.checked; form.error = ""; render(); }
     else if (t.id === "ah-file") {
       const f = t.files?.[0];

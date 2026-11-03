@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import ssh2 from "ssh2";
 import WebSocket from "ws";
 import { validateConfig, resolveSecret } from "../src/server/config.js";
@@ -39,15 +39,17 @@ fs.writeFileSync(path.join(sftpRoot, "home/demo/trash1.txt"), "bye");
 fs.writeFileSync(path.join(sftpRoot, "home/demo/trash2.txt"), "bye");
 fs.symlinkSync("docs", path.join(sftpRoot, "home/demo/docs-link"));
 let sshPort = 0;
+let bastionPort = 0;
 let lastPty: any;
 let lastWindow: any;
+function acceptLogin(ctx: any) {
+  if (ctx.method === "password" && ctx.username === "deploy" && ctx.password === "s3cret") ctx.accept();
+  else if (ctx.method === "publickey" && ctx.username === "deploy" && ctx.key.algo === userPub.type &&
+    Buffer.compare(ctx.key.data, userPub.getPublicSSH()) === 0 && (!ctx.signature || userPub.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) === true)) ctx.accept();
+  else ctx.reject(["password", "publickey"]);
+}
 const sshd = new Server({ hostKeys: [hostKey.private] }, (client) => {
-  client.on("authentication", (ctx) => {
-    if (ctx.method === "password" && ctx.username === "deploy" && ctx.password === "s3cret") ctx.accept();
-    else if (ctx.method === "publickey" && ctx.username === "deploy" && ctx.key.algo === userPub.type &&
-      Buffer.compare(ctx.key.data, userPub.getPublicSSH()) === 0 && (!ctx.signature || userPub.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) === true)) ctx.accept();
-    else ctx.reject(["password", "publickey"]);
-  });
+  client.on("authentication", acceptLogin);
   client.on("ready", () => {
     client.on("session", (accept) => {
       const session = accept();
@@ -81,6 +83,20 @@ const sshd = new Server({ hostKeys: [hostKey.private] }, (client) => {
   });
   client.on("error", () => {});
 });
+const bastionSshd = new Server({ hostKeys: [hostKey.private] }, (client) => {
+  client.on("authentication", acceptLogin);
+  client.on("ready", () => {
+    client.on("tcpip", (accept, reject, info) => {
+      if (info.destPort !== sshPort) return reject();
+      const channel = accept();
+      const upstream = net.connect(info.destPort, info.destIP);
+      channel.pipe(upstream).pipe(channel);
+      upstream.on("error", () => channel.close());
+      channel.on("close", () => upstream.destroy());
+    });
+  });
+  client.on("error", () => {});
+});
 
 let base = "";
 let app: ReturnType<typeof createApp>;
@@ -95,6 +111,8 @@ let sealCalls = 0;
 before(async () => {
   await new Promise<void>((r) => sshd.listen(0, "127.0.0.1", () => r()));
   sshPort = (sshd.address() as AddressInfo).port;
+  await new Promise<void>((r) => bastionSshd.listen(0, "127.0.0.1", () => r()));
+  bastionPort = (bastionSshd.address() as AddressInfo).port;
   process.env.TEST_PW = "s3cret";
   fs.writeFileSync(passwordFile, "s3cret\r\n");
   const probe = (await import("node:net")).createServer();
@@ -128,6 +146,18 @@ before(async () => {
         auth: { type: "password", password: { file: passwordFile } }, hostKeyFingerprints: [fp] },
       { id: "private", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], allowedUsers: ["other"] },
+      { id: "bastion", name: "bastion", host: "127.0.0.1", port: bastionPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp] },
+      { id: "bastion-locked", name: "bastion locked", host: "127.0.0.1", port: bastionPort, username: "deploy",
+        auth: { type: "key", privateKey: userKey.private }, hostKeyFingerprints: [fp] },
+      { id: "via-plain", host: "127.0.0.1", port: sshPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], via: "bastion" },
+      { id: "via-locked", host: "127.0.0.1", port: sshPort, username: "deploy",
+        auth: { type: "key", privateKey: userKey.private }, hostKeyFingerprints: [fp], via: "bastion" },
+      { id: "via-locked-bastion", host: "127.0.0.1", port: sshPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], via: "bastion-locked" },
+      { id: "private-via", host: "127.0.0.1", port: sshPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], via: "private" },
     ],
   }, process.cwd());
   app = createApp(cfg, {
@@ -148,6 +178,7 @@ before(async () => {
 after(() => {
   app.server.close();
   sshd.close();
+  bastionSshd.close();
   fs.rmSync(secretDir, { recursive: true, force: true });
   setTimeout(() => process.exit(0), 50).unref();
 });
@@ -285,7 +316,7 @@ test("signed-in user gets the app and only display fields for permitted hosts", 
   const cookie = await signIn("AaronBurt");
   assert.match(await (await fetch(base + "/", { headers: { cookie } })).text(), /\/assets\/app-[A-Z0-9]{8}\.js/);
   const hosts = await (await fetch(base + "/api/hosts", { headers: { cookie } })).json();
-  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "nofiles", "locked", "wrongkey", "badpw", "filepw"]);
+  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "nofiles", "locked", "wrongkey", "badpw", "filepw", "bastion", "bastion-locked", "via-plain", "via-locked", "via-locked-bastion", "private-via"]);
   const raw = JSON.stringify(hosts);
   assert.doesNotMatch(raw, /s3cret|SHA256|password/);
   assert.equal(hosts[0].addr, `deploy@127.0.0.1:${sshPort}`);
@@ -377,6 +408,59 @@ test("key hosts ask for the passphrase in the browser, retry on a wrong one, and
   assert.doesNotMatch(JSON.stringify(t.json), /correct horse|wrong/);
   t.ws.close();
   await new Promise((r) => setTimeout(r, 100));
+});
+
+test("a host behind a bastion opens through it, and both hops are logged", async () => {
+  const cookie = await signIn();
+  const t = openWs(cookie, "via-plain");
+  await t.waitFor(() => t.json.some((m) => m.state === "connected"));
+  assert.equal(t.json.find((m) => m.state === "connected").info.route, `Through bastion (deploy@127.0.0.1${bastionPort === 22 ? "" : `:${bastionPort}`})`);
+  await t.waitFor(() => t.out.includes("welcome to fake-host"));
+  const trail = app.auditLog.all({ type: "SSH connections", user: "aaronburt" });
+  assert.deepEqual([trail[0].kind, trail[0].host, trail[1].kind, trail[1].host], ["ssh_connect", "via-plain", "ssh_connect", "bastion"]);
+  assert.match(trail[0].detail, /through bastion/);
+  assert.match(trail[1].detail, /Tunnel to via-plain/);
+  t.ws.send(Buffer.from("exit\r"), { binary: true });
+  await t.waitFor(() => t.json.some((m) => m.state === "closed"));
+});
+
+test("a bastion's passphrase is asked first and its wrong tries are counted on it", async () => {
+  const cookie = await signIn();
+  const t = openWs(cookie, "via-locked-bastion");
+  await t.waitFor(() => t.json.some((m) => m.t === "passphrase"));
+  const first = t.json.find((m) => m.t === "passphrase");
+  assert.deepEqual([first.hostId, first.role, first.retry], ["bastion-locked", "bastion", false]);
+  t.ws.send(JSON.stringify({ t: "passphrase", value: "wrong" }));
+  await t.waitFor(() => t.json.filter((m) => m.t === "passphrase").length === 2);
+  const retry = t.json.filter((m) => m.t === "passphrase")[1];
+  assert.deepEqual([retry.hostId, retry.retry, retry.remaining], ["bastion-locked", true, 2]);
+  t.ws.send(JSON.stringify({ t: "passphrase", value: "correct horse" }));
+  await t.waitFor(() => t.json.some((m) => m.state === "connected"));
+  assert.equal(t.json.filter((m) => m.t === "passphrase").length, 2);
+  await t.waitFor(() => t.out.includes("welcome to fake-host"));
+  assert.doesNotMatch(JSON.stringify(t.json), /correct horse|wrong/);
+  t.ws.close();
+  await new Promise((r) => setTimeout(r, 100));
+});
+
+test("a key host behind a bastion asks for its own passphrase once the tunnel is open", async () => {
+  const cookie = await signIn();
+  const t = openWs(cookie, "via-locked");
+  await t.waitFor(() => t.json.some((m) => m.t === "passphrase"));
+  const first = t.json.find((m) => m.t === "passphrase");
+  assert.deepEqual([first.hostId, first.role, first.retry], ["via-locked", "target", false]);
+  assert.ok(!t.json.some((m) => m.state === "connected"));
+  t.ws.send(JSON.stringify({ t: "passphrase", value: "correct horse" }));
+  await t.waitFor(() => t.json.some((m) => m.state === "connected"));
+  assert.equal(t.json.find((m) => m.state === "connected").info.auth, "key, passphrase entered in browser");
+  await t.waitFor(() => t.out.includes("welcome to fake-host"));
+  t.ws.close();
+  await new Promise((r) => setTimeout(r, 100));
+});
+
+test("a host cannot be opened through a bastion the user is not allowed to see", async () => {
+  const cookie = await signIn();
+  assert.equal(await wsStatus(cookie, "private-via", base), 403);
 });
 
 test("three wrong passphrases close the terminal", async () => {

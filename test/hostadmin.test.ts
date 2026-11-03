@@ -254,7 +254,7 @@ test("probeHostKey reads the SHA256 fingerprint of the host key without logging 
   } finally {
     sshd.close();
   }
-  await assert.rejects(probeHostKey("127.0.0.1", port, 1500));
+  await assert.rejects(probeHostKey("127.0.0.1", port, undefined, 1500));
 });
 
 const countingProbe = () => {
@@ -348,7 +348,7 @@ test("an operator's own key file is never deleted along with a host", async () =
 test("describeHost reports the current key without exposing it", () => {
   const { cfg } = plainSetup();
   const d = describeHost(cfg, "first");
-  assert.deepEqual(d, { id: "first", name: "first", group: "", host: "10.0.0.1", port: 22, username: "deploy", auth: { type: "key", keyId: listKeys(cfg)[0].id, keyName: "deploy_ed25519", encrypted: true } });
+  assert.deepEqual(d, { id: "first", name: "first", group: "", host: "10.0.0.1", port: 22, username: "deploy", via: "", auth: { type: "key", keyId: listKeys(cfg)[0].id, keyName: "deploy_ed25519", encrypted: true } });
   assert.ok(!JSON.stringify(d).includes("PRIVATE KEY"));
   assert.throws(() => describeHost(cfg, "nope"), (e: unknown) => e instanceof HostAdminError && e.status === 404);
 });
@@ -419,4 +419,104 @@ test("only admins can read, edit or delete a host over the API", async () => {
   } finally {
     await app.shutdown(200, "test");
   }
+});
+
+const BASTION_FP = "SHA256:bastionbastionbastionbastionbastionbastion0";
+const bastionHost = { id: "bastion", name: "bastion", host: "198.51.100.1", username: "jump", auth: { type: "key", privateKey: bare.private, passphrase: false, keyName: "jump_ed25519" }, hostKeyFingerprints: [BASTION_FP] };
+
+function routedSetup(extraHosts: unknown[] = []) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-hostadmin-route-"));
+  const file = path.join(dir, "config.json");
+  fs.writeFileSync(file, JSON.stringify(rawConfig({ hosts: [rawConfig().hosts[0], bastionHost, ...extraHosts] }), null, 2));
+  return { dir, file, cfg: loadConfig(file) };
+}
+
+test("a host added through a bastion is pinned through it and saves the route", async () => {
+  const { file, cfg } = routedSetup();
+  const seen: Array<{ host: string; port: number; bastion?: ssh2.ConnectConfig }> = [];
+  const through = async (host: string, port: number, bastion?: ssh2.ConnectConfig) => {
+    seen.push({ host, port, bastion });
+    return FP;
+  };
+  const host = await addHost(cfg, fileStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, through);
+  assert.equal(host.via, "bastion");
+  assert.deepEqual(host.hostKeyFingerprints, [FP]);
+  assert.equal(seen[0].bastion?.host, "198.51.100.1");
+  assert.equal(seen[0].bastion?.username, "jump");
+  assert.equal((seen[0].bastion?.hostVerifier as (k: Buffer) => boolean)(Buffer.from("not the pinned key")), false);
+  const saved = JSON.parse(fs.readFileSync(file, "utf8")).hosts.find((h: { id: string }) => h.id === host.id);
+  assert.equal(saved.via, "bastion");
+});
+
+test("a direct host is probed without a bastion, as before", async () => {
+  const { file, cfg } = routedSetup();
+  const seen: Array<unknown> = [];
+  const host = await addHost(cfg, fileStore(file), { ...base, key: { existing: listKeys(cfg)[0].id } }, async (...args) => {
+    seen.push(args[2]);
+    return FP;
+  });
+  assert.equal(host.via, undefined);
+  assert.deepEqual(seen, [undefined]);
+});
+
+test("a bastion whose key has a passphrase cannot be used to read a host key", async () => {
+  const { file, cfg } = routedSetup();
+  await rejects(addHost(cfg, fileStore(file), { ...base, via: "first", key: { existing: listKeys(cfg)[0].id } }, probe), 422, "bastion_passphrase");
+  assert.equal(cfg.hosts.length, 2);
+});
+
+test("routes must name another direct host, and a bastion cannot itself be routed", async () => {
+  const { file, cfg } = routedSetup();
+  const store = fileStore(file);
+  const input = { ...base, key: { existing: listKeys(cfg)[0].id } };
+  await rejects(addHost(cfg, store, { ...input, via: "nope" }, probe), 400, "invalid");
+  await addHost(cfg, store, { ...input, via: "bastion" }, probe);
+  await rejects(addHost(cfg, store, { ...input, name: "routed twice", via: "web-03" }, probe), 400, "invalid");
+  const routed = cfg.hosts.find((h) => h.via === "bastion")!;
+  await rejects(updateHost(cfg, store, "bastion", { ...base, name: "bastion", host: "198.51.100.1", username: "jump", key: { keep: true }, via: routed.id }, probe), 400, "invalid");
+  await rejects(updateHost(cfg, store, "bastion", { ...base, name: "bastion", host: "198.51.100.1", username: "jump", key: { keep: true }, via: "bastion" }, probe), 400, "invalid");
+});
+
+test("a host other hosts route through cannot be deleted or re-routed", async () => {
+  const { file, cfg } = routedSetup();
+  const store = fileStore(file);
+  await addHost(cfg, store, { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, probe);
+  assert.throws(() => removeHost(cfg, store, "bastion"), (e: unknown) => e instanceof HostAdminError && e.status === 409 && e.code === "is_bastion");
+  await rejects(updateHost(cfg, store, "bastion", { ...base, name: "bastion", host: "198.51.100.1", username: "jump", key: { keep: true }, via: "first" }, probe), 409, "is_bastion");
+});
+
+test("changing a route pins the host key again through the new route", async () => {
+  const { file, cfg } = routedSetup();
+  const store = fileStore(file);
+  const id = (await addHost(cfg, store, { ...base, key: { existing: listKeys(cfg)[0].id } }, probe)).id;
+  const seen: Array<ssh2.ConnectConfig | undefined> = [];
+  const updated = await updateHost(cfg, store, id, { ...base, key: { keep: true }, via: "bastion" }, async (_h, _p, bastion) => {
+    seen.push(bastion);
+    return BASTION_FP;
+  });
+  assert.equal(updated.via, "bastion");
+  assert.deepEqual(updated.hostKeyFingerprints, [BASTION_FP]);
+  assert.equal(seen[0]?.host, "198.51.100.1");
+  const back = await updateHost(cfg, store, id, { ...base, key: { keep: true } }, async (_h, _p, bastion) => {
+    seen.push(bastion);
+    return FP;
+  });
+  assert.equal(back.via, undefined);
+  assert.equal(seen[1], undefined);
+});
+
+test("describeHost reports the route", async () => {
+  const { file, cfg } = routedSetup();
+  const id = (await addHost(cfg, fileStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, probe)).id;
+  assert.equal(describeHost(cfg, id).via, "bastion");
+});
+
+test("config: a route must name a host that connects directly, and cannot loop back", () => {
+  const withRoute = (hosts: unknown[]) => rawConfig({ hosts });
+  const first = rawConfig().hosts[0];
+  const ok = loadSealedConfig(JSON.stringify(withRoute([first, { ...bastionHost, id: "b" }, { ...first, id: "t", via: "b" }])));
+  assert.equal(ok.hosts.find((h) => h.id === "t")?.via, "b");
+  assert.throws(() => loadSealedConfig(JSON.stringify(withRoute([first, { ...first, id: "t", via: "missing" }]))), /via missing is not a host/);
+  assert.throws(() => loadSealedConfig(JSON.stringify(withRoute([first, { ...first, id: "t", via: "t" }]))), /cannot connect through itself/);
+  assert.throws(() => loadSealedConfig(JSON.stringify(withRoute([first, { ...bastionHost, id: "b", via: "first" }, { ...first, id: "t", via: "b" }]))), /only one hop/);
 });
