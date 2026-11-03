@@ -47,11 +47,11 @@
     <section class="acct-sec">
       <h5>Display</h5>
       <div class="acct-row">
-        <div><strong id="addr-label">Hide host addresses</strong><small>Hide the user@host line under each host in the sidebar.</small></div>
+        <div><strong id="addr-label">Hide host addresses</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Hide host addresses" aria-describedby="help-addr" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-addr" role="tooltip" popover="auto">Hide the user@host line under each host in the sidebar. Saved in this browser.</span></span></div>
         <button class="switch" id="addr-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="addr-label"></button>
       </div>
       <div class="acct-row acct-zoom">
-        <div><strong id="zoom-label">Interface zoom</strong><small>Scale the whole interface. Saved in this browser.</small></div>
+        <div><strong id="zoom-label">Interface zoom</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Interface zoom" aria-describedby="help-zoom" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-zoom" role="tooltip" popover="auto">Scale the whole interface. Saved in this browser.</span></span></div>
         <div class="stepper" role="group" aria-labelledby="zoom-label">
           <button class="tool" id="zoom-out" type="button" aria-label="Zoom out">−</button>
           <button class="tool zoom-val" id="zoom-reset" type="button" aria-label="Reset zoom to 100%" title="Reset to 100%">100%</button>
@@ -62,11 +62,11 @@
     <section class="acct-sec">
       <h5>Screen lock</h5>
       <div class="acct-row">
-        <div><strong>Lock now</strong><small>Hide every terminal and block input. Your sessions stay connected. Unlock with a passkey or your authenticator code.</small></div>
+        <div><strong>Lock now</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Lock now" aria-describedby="help-lock" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-lock" role="tooltip" popover="auto">Hide terminals and block input while sessions stay connected. Unlock with a passkey or authenticator code.</span></span></div>
         <button class="btn ghost" id="lock-now" type="button">Lock</button>
       </div>
       <div class="acct-row">
-        <div><strong id="al-label">Auto-lock when idle</strong><small>Lock after no keyboard or mouse activity in this browser tab. Saved in this browser.</small></div>
+        <div><strong id="al-label">Auto-lock</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Auto-lock" aria-describedby="help-al" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-al" role="tooltip" popover="auto">Lock after no keyboard or mouse activity in this tab. Saved in this browser.</span></span></div>
         <button class="switch" id="al-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="al-label"></button>
       </div>
       <div class="acct-row" id="al-row" hidden>
@@ -75,34 +75,33 @@
       </div>
     </section>
     <section class="acct-sec" id="acct-pk-sec" hidden>
-      <h5>Passkeys</h5>
-      <p class="fine pk-intro">A passkey lets you sign in from the sign-in page without GitHub or an authenticator code. Your device checks it is really you (fingerprint, face or PIN) before it signs.</p>
+      <h5 class="acct-heading">Passkeys<span class="acct-help"><button class="info-btn" type="button" aria-label="About Passkeys" aria-describedby="help-passkeys" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-passkeys" role="tooltip" popover="auto">Sign in with your fingerprint, face or PIN instead of GitHub and an authenticator code. Your GitHub account must remain on the server allowlist. Add passkeys while signed in.</span></span></h5>
       <ul class="pk-list" id="pk-list"></ul>
-      <div class="pk-foot"><p class="fine">You can only add a passkey while signed in. Your GitHub account must stay on this server's allowlist.</p><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
+      <div class="pk-foot"><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
     </section>
     <section class="acct-sec" id="acct-ap-sec" hidden>
       <h5>SSH key passphrases</h5>
       <div class="acct-row">
-        <div><strong id="ap-label">Passphrase auto enter</strong><small>Remember the passphrase for each host after you type it once, and enter it for you next time. Stored only in this browser, encrypted with a key the browser cannot export. Never saved on the server.</small></div>
+        <div><strong id="ap-label">Remember passphrases</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Remember passphrases" aria-describedby="help-ap" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-ap" role="tooltip" popover="auto">Enter saved SSH key passphrases automatically. Stored encrypted in this browser, never on the server. Anyone with access to this browser profile while signed in, or code running in this page, can read them. Only use on a trusted device.</span></span></div>
         <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
       </div>
-      <div class="alert ap-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg><div><b>Riskier option.</b> The passphrase is left in this browser's storage. Anyone who can use this browser profile while you are signed in, or run code in this page, can read it and unlock your SSH key. Only turn this on for a device you fully trust.</div></div>
+      <p class="acct-caution">Use only on a trusted device.</p>
       <div class="acct-row">
-        <div><strong>Saved on this browser</strong><small id="ap-count">Nothing saved.</small><small>Saved passphrases are also forgotten when you sign out, and a saved one that stops working is discarded.</small></div>
+        <div><strong>Saved passphrases</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Saved passphrases" aria-describedby="help-saved" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-saved" role="tooltip" popover="auto">Forgotten when you sign out. A saved passphrase that stops working is discarded.</span></span><small id="ap-count">Nothing saved.</small></div>
         <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>
       </div>
     </section>
     <section class="acct-sec" id="acct-audit-sec" hidden>
       <h5>Audit log</h5>
       <div class="acct-row">
-        <div><strong>Who connected, and when</strong><small>Sign-ins, SSH connections to each host, host and key changes, passkeys, failed unlocks and sealing. Opens in its own tab. Admins only.</small></div>
+        <div><strong>Audit log</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Audit log" aria-describedby="help-audit" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-audit" role="tooltip" popover="auto">View sign-ins, SSH connections, host and key changes, passkeys, failed unlocks and sealing in a separate tab. Admins only.</span></span></div>
         <button class="btn ghost" id="acct-audit" type="button">Open</button>
       </div>
     </section>
     <section class="acct-sec" id="acct-seal-sec" hidden>
       <h5>Server</h5>
       <div class="acct-row">
-        <div><strong>Vault</strong><small>Unsealed. Sealing signs everyone out, closes every terminal and locks the server until the passphrase is entered again.</small></div>
+        <div><strong>Seal server</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Seal server" aria-describedby="help-vault" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-vault" role="tooltip" popover="auto">Signs everyone out, disconnects all terminals and locks the server until its passphrase is entered again.</span></span><small>Disconnects everyone.</small></div>
         <button class="btn ghost" id="acct-seal" type="button">Seal server</button>
       </div>
     </section>

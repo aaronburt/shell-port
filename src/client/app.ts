@@ -8,6 +8,7 @@ import { initAddHost } from "./addhost.js";
 import { initPasskeys } from "./passkeys.js";
 import { initLock } from "./lock.js";
 import { initAudit } from "./audit.js";
+import { initAccountHelp } from "./account-help.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string }
@@ -325,7 +326,10 @@ function applyMode() {
       t.files.show();
     } else t.files.hide();
   }
-  for (const pg of pages) pg.el.hidden = pg !== activePage;
+  for (const pg of pages) {
+    pg.el.hidden = pg !== activePage;
+    if (pg.el.hidden) pg.el.querySelectorAll<HTMLElement>(".info-tip:popover-open").forEach((tip) => tip.hidePopover());
+  }
   const t = shown();
   syncLayoutUi();
   if (!t) return;
@@ -468,7 +472,6 @@ function makePane(tab: Tab, host: Host): Pane {
   };
 
   term.attachCustomKeyEventHandler((e) => handleTermKey(e, pane));
-  // Native copy (context menu, Ctrl+C with a selection in the helper textarea): always copy what xterm has selected.
   el.addEventListener("copy", (e) => {
     const sel = term.getSelection();
     if (!sel || !e.clipboardData) return;
@@ -1177,6 +1180,7 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 const accountBtn = $("account-btn");
+initAccountHelp($("page-account"));
 const scrim = $("signout-scrim");
 const addrToggle = $("addr-toggle");
 
