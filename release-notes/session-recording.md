@@ -2,7 +2,7 @@
 
 - Admins can review SSH sessions. Each session opened in the browser is recorded as its terminal output. Typed keys are not recorded.
 - The Audit log has a new **Recordings** view to play, download or delete recordings, and connect events link to their recording.
-- A red **REC** badge shows on a session tab while the session is being recorded.
+- A session tab shows a red dot in place of the green connected dot while the session is being recorded.
 - Recordings are kept for 90 days by default, and a session stops being recorded at 100 MB.
 
 ## After updating

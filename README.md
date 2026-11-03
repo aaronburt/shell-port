@@ -259,7 +259,7 @@ Each SSH session that a user opens in the browser is recorded to a file. The rec
 
 - **Who sees them.** Only admins. Account → Audit log has a **Recordings** view that lists every recording with its host, user, length and size. **Play** opens a playback tab with pause, seek and 1×–8× speed. **Download .cast** saves the file in asciicast v2 format, which the [asciinema](https://asciinema.org) player can also play. **Delete** removes a finished recording. Every view, download and delete is written to the audit log.
 - **Connect events link to their recording.** A connect row in the Events view has a **Play recording** link.
-- **Visible to the user.** A session that is being recorded shows a red **REC** badge on its tab. Recording is on by default, so tell your users.
+- **Visible to the user.** A session that is being recorded shows a red dot on its tab in place of the green connected dot. Recording is on by default, so tell your users.
 - **Where it is stored.** One `.cast` file per session, in `recordings/<host id>/`, next to the vault (or next to `config.json` when the vault is not used). Set `SHELLPORT_RECORDINGS` to use another folder. Each recording also has a small `.json` file with its details.
 - **Encrypted while sealed.** When the server is sealed, every line of every recording is encrypted with a key derived from the vault key. Recordings cannot be played while the server is sealed, and nothing is recorded until it is unsealed.
 - **Retention and size.** Recordings older than `recording.retentionDays` (default 90) are deleted. A session that reaches `recording.maxMB` (default 100) is closed, and its recording is marked as stopped early.
