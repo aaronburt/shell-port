@@ -164,7 +164,7 @@ test("admin: the address follows the Account tab as it opens and closes", async 
   await admin.locator("#account-btn").click();
   await admin.locator("#page-account").waitFor({ state: "visible" });
   await until("the address to name the account", async () => (await search(admin)) === "?page=account");
-  await admin.locator("#acct-close").click();
+  await admin.evaluate(() => (document.querySelector(".tab.ptab[data-page=account] .tab-files") as HTMLElement).click());
   await until("the address to drop the account", async () => (await search(admin)) === "");
   await admin.locator("#account-btn").click();
   await until("the address to name the account again", async () => (await search(admin)) === "?page=account");
