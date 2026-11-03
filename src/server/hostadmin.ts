@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import ssh2 from "ssh2";
+import ssh2, { type ConnectConfig } from "ssh2";
 import { keyIsEncrypted, resolveSecret, validateHost, type HostConfig, type HostAuthKey, type LoadedConfig } from "./config.js";
+import { hopAuth, keyPinned } from "./hop.js";
 import { openVaultWithKey, replaceVaultBody } from "./vault.js";
 import { writeFileAtomic } from "./vaultops.js";
 
@@ -35,9 +36,10 @@ export interface AddHostInput {
   username: unknown;
   key: unknown;
   allowNoPassphrase: unknown;
+  via?: unknown;
 }
 
-export type KeyProbe = (host: string, port: number) => Promise<string>;
+export type KeyProbe = (host: string, port: number, bastion?: ConnectConfig) => Promise<string>;
 
 const HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,251}[A-Za-z0-9])?$/;
 const USER_RE = /^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,63}$/;
@@ -150,33 +152,65 @@ export function vaultStore(vaultPath: string, dek: Buffer): HostStore {
   return makeStore("vault", "the vault", path.dirname(path.resolve(vaultPath)), vaultIo(vaultPath, dek));
 }
 
-export function probeHostKey(host: string, port: number, timeoutMs = 8000): Promise<string> {
+export function probeHostKey(host: string, port: number, bastion?: ConnectConfig, timeoutMs = 8000): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = new ssh2.Client();
+    const hop = bastion ? new ssh2.Client() : undefined;
     let fp: string | undefined;
     let settled = false;
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      hop?.destroy();
       client.destroy();
       if (fp) resolve(fp);
       else reject(err ?? new Error("closed"));
     };
     const timer = setTimeout(() => finish(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })), timeoutMs);
-    client.on("error", (e) => finish(e));
-    client.on("close", () => finish());
-    client.connect({
-      host,
-      port,
+    const target: ConnectConfig = {
       username: "shellport-probe",
       readyTimeout: timeoutMs,
       hostVerifier: (key: Buffer) => {
         fp = "SHA256:" + crypto.createHash("sha256").update(key).digest("base64").replace(/=+$/, "");
         return false;
       },
+    };
+    client.on("error", (e) => finish(e));
+    client.on("close", () => finish());
+    if (!hop || !bastion) {
+      client.connect({ ...target, host, port });
+      return;
+    }
+    hop.on("error", (e) => finish(e));
+    hop.on("close", () => finish());
+    hop.on("ready", () => {
+      hop.forwardOut("127.0.0.1", 0, host, port, (err, channel) => {
+        if (err || !channel) return finish(err ?? new Error("no channel"));
+        client.connect({ ...target, sock: channel });
+      });
     });
+    hop.connect({ ...bastion, readyTimeout: timeoutMs });
   });
+}
+
+function routeConn(cfg: LoadedConfig, b: HostConfig): ConnectConfig {
+  const auth = hopAuth(b, cfg.baseDir);
+  if (auth.needsPassphrase) {
+    throw new HostAdminError(422, "bastion_passphrase", "Shellport has to log in to the bastion to read this host's key, and the bastion's key has a passphrase. Use a bastion whose key has no passphrase, or one that logs in with a password.");
+  }
+  auth.conn.hostVerifier = (key: Buffer) => keyPinned(b, key, cfg.security.allowUnpinnedHostKeys);
+  return auth.conn;
+}
+
+function bastionFor(cfg: LoadedConfig, input: unknown, self?: string): HostConfig | undefined {
+  const id = text(input, "Connect via", 64, false);
+  if (!id) return undefined;
+  if (id === self) throw new HostAdminError(400, "invalid", "A host cannot connect through itself.");
+  const bastion = cfg.hosts.find((h) => h.id === id);
+  if (!bastion) throw new HostAdminError(400, "invalid", "That bastion host no longer exists.");
+  if (bastion.via) throw new HostAdminError(400, "invalid", "A bastion must connect directly. Pick a host that does not connect through another.");
+  return bastion;
 }
 
 function probeMessage(err: Error & { code?: string }): string {
@@ -275,9 +309,9 @@ function parseFields(input: AddHostInput): Fields {
   return { name, group, host, port, username };
 }
 
-async function pin(probe: KeyProbe, host: string, port: number): Promise<string> {
+async function pin(probe: KeyProbe, host: string, port: number, bastion?: ConnectConfig): Promise<string> {
   try {
-    return await probe(host, port);
+    return await probe(host, port, bastion);
   } catch (e) {
     throw new HostAdminError(422, "unreachable", probeMessage(e as Error));
   }
@@ -285,9 +319,10 @@ async function pin(probe: KeyProbe, host: string, port: number): Promise<string>
 
 export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHostInput, probe: KeyProbe = probeHostKey): Promise<HostConfig> {
   const { name, group, host, port, username } = parseFields(input);
+  const bastion = bastionFor(cfg, input.via);
   if (cfg.hosts.some((h) => h.name.toLowerCase() === name.toLowerCase())) throw new HostAdminError(409, "duplicate", "A host with that name already exists.");
   const { auth, pem } = resolveKey(cfg, input.key, input.allowNoPassphrase === true);
-  const fingerprint = await pin(probe, host, port);
+  const fingerprint = await pin(probe, host, port, bastion ? routeConn(cfg, bastion) : undefined);
 
   let id = slug(name);
   for (let n = 2; cfg.hosts.some((h) => h.id === id); n++) id = `${slug(name).slice(0, 58)}-${n}`;
@@ -300,6 +335,7 @@ export async function addHost(cfg: LoadedConfig, store: HostStore, input: AddHos
     username,
     auth,
     hostKeyFingerprints: [fingerprint],
+    ...(bastion ? { via: bastion.id } : {}),
   };
   try {
     validateHost(structuredClone(candidate), cfg.baseDir, cfg.security, new Set(cfg.hosts.map((h) => h.id)));
@@ -322,6 +358,7 @@ export interface HostDetails {
   host: string;
   port: number;
   username: string;
+  via: string;
   auth: { type: "password" } | { type: "key"; keyId: string; keyName: string; encrypted: boolean };
 }
 
@@ -333,7 +370,7 @@ function findHost(cfg: LoadedConfig, id: string): number {
 
 export function describeHost(cfg: LoadedConfig, id: string): HostDetails {
   const h = cfg.hosts[findHost(cfg, id)];
-  const base = { id: h.id, name: h.name, group: h.group ?? "", host: h.host, port: h.port ?? 22, username: h.username };
+  const base = { id: h.id, name: h.name, group: h.group ?? "", host: h.host, port: h.port ?? 22, username: h.username, via: h.via ?? "" };
   if (h.auth.type !== "key") return { ...base, auth: { type: "password" } };
   const pem = resolveSecret(h.auth.privateKey, cfg.baseDir, "privateKey", true)!;
   return { ...base, auth: { type: "key", keyId: keyFingerprint(pem), keyName: keyNameOf(h), encrypted: keyIsEncrypted(pem) === true } };
@@ -343,14 +380,29 @@ export async function updateHost(cfg: LoadedConfig, store: HostStore, id: string
   const idx = findHost(cfg, id);
   const old = cfg.hosts[idx];
   const { name, group, host, port, username } = parseFields(input);
+  const bastion = bastionFor(cfg, input.via, id);
+  if (bastion && cfg.hosts.some((h) => h.via === id)) throw new HostAdminError(409, "is_bastion", "Other hosts connect through this host, so it cannot connect through another one.");
   if (cfg.hosts.some((h) => h.id !== id && h.name.toLowerCase() === name.toLowerCase())) throw new HostAdminError(409, "duplicate", "A host with that name already exists.");
   const keep = !!input.key && typeof input.key === "object" && (input.key as { keep?: unknown }).keep === true;
   const { auth, pem } = keep ? { auth: structuredClone(old.auth), pem: undefined } : resolveKey(cfg, input.key, input.allowNoPassphrase === true);
   const moved = host !== old.host || port !== (old.port ?? 22);
-  const fingerprints = moved ? [await pin(probe, host, port)] : old.hostKeyFingerprints;
+  const rerouted = (bastion?.id ?? "") !== (old.via ?? "");
+  const fingerprints = moved || rerouted
+    ? [await pin(probe, host, port, bastion ? routeConn(cfg, bastion) : undefined)]
+    : old.hostKeyFingerprints;
 
-  const { group: _g, ...rest } = old;
-  const candidate: HostConfig = { ...rest, ...(group ? { group } : {}), name, host, port, username, auth, hostKeyFingerprints: fingerprints };
+  const { group: _g, via: _v, ...rest } = old;
+  const candidate: HostConfig = {
+    ...rest,
+    ...(group ? { group } : {}),
+    name,
+    host,
+    port,
+    username,
+    auth,
+    hostKeyFingerprints: fingerprints,
+    ...(bastion ? { via: bastion.id } : {}),
+  };
   try {
     validateHost(structuredClone(candidate), cfg.baseDir, cfg.security, new Set(cfg.hosts.filter((h) => h.id !== id).map((h) => h.id)));
   } catch (e) {
@@ -366,6 +418,7 @@ export async function updateHost(cfg: LoadedConfig, store: HostStore, id: string
 export function removeHost(cfg: LoadedConfig, store: HostStore, id: string): HostConfig {
   const idx = findHost(cfg, id);
   if (cfg.hosts.length <= 1) throw new HostAdminError(409, "last_host", "At least one host must remain.");
+  if (cfg.hosts.some((h) => h.via === id)) throw new HostAdminError(409, "is_bastion", "Other hosts connect through this host. Change their route first.");
   store.remove(id);
   return cfg.hosts.splice(cfg.hosts.findIndex((h) => h.id === id), 1)[0];
 }

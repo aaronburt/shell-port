@@ -11,14 +11,14 @@ import { initAudit } from "./audit.js";
 import { initAccountHelp } from "./account-help.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
-interface Host { id: string; name: string; group: string; tag: string; addr: string }
+interface Host { id: string; name: string; group: string; tag: string; addr: string; via?: string }
 interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean; version: string; releaseNotesUrl: string }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   method?: "github" | "passkey"; session?: string; current?: boolean; active?: boolean; expiresAt?: number;
 }
 type State = "connecting" | "connected" | "closed";
-interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; cipher: string; hostKey: string; since: string }
+interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; route?: string; cipher: string; hostKey: string; since: string }
 
 interface Pane {
   id: string;
@@ -34,8 +34,9 @@ interface Pane {
   info?: Info;
   reason?: string;
   passphrase?: string;
-  usedSaved?: boolean;
-  pendingSave?: string;
+  usedSaved?: string;
+  asking?: string;
+  pendingSave?: Map<string, string>;
 }
 
 type Dir = "row" | "col";
@@ -885,30 +886,34 @@ function send(pane: Pane, data: Uint8Array<ArrayBuffer>) {
   if (pane.ws?.readyState === WebSocket.OPEN && pane.state === "connected") pane.ws.send(data);
 }
 
-function promptPassphrase(pane: Pane, retry: boolean, remaining: number) {
+function promptPassphrase(pane: Pane, retry: boolean, remaining: number, addr: string) {
   pane.passphrase = "";
   const note = retry ? `\r\n\x1b[31mIncorrect passphrase.\x1b[0m ${remaining} ${remaining === 1 ? "try" : "tries"} left.\r\n` : "";
-  pane.term.write(`${note}\x1b[33mPassphrase for ${pane.host.addr}:\x1b[0m `);
+  pane.term.write(`${note}\x1b[33mPassphrase for ${addr}:\x1b[0m `);
   pane.term.focus();
 }
 
-async function handlePassphraseRequest(pane: Pane, ws: WebSocket, retry: boolean, remaining: number) {
-  pane.pendingSave = undefined;
-  if (retry && pane.usedSaved) {
-    pane.usedSaved = false;
-    await forgetPassphrase(scope, pane.host.id).catch(() => {});
+interface PassphraseRequest { hostId: string; addr: string; retry: boolean; remaining: number }
+
+async function handlePassphraseRequest(pane: Pane, ws: WebSocket, req: PassphraseRequest) {
+  const { hostId, addr, retry, remaining } = req;
+  pane.asking = hostId;
+  pane.pendingSave?.delete(hostId);
+  if (retry && pane.usedSaved === hostId) {
+    pane.usedSaved = undefined;
+    await forgetPassphrase(scope, hostId).catch(() => {});
     renderAutoPass();
     pane.term.write("\r\n\x1b[90mThe saved passphrase no longer works, so it was forgotten.\x1b[0m");
   } else if (!retry && autoPassEnabled()) {
-    const saved = await loadPassphrase(scope, pane.host.id).catch(() => undefined);
+    const saved = await loadPassphrase(scope, hostId).catch(() => undefined);
     if (saved !== undefined && pane.ws === ws && ws.readyState === WebSocket.OPEN) {
-      pane.usedSaved = true;
-      pane.term.write(`\x1b[90mUsing the passphrase saved in this browser for ${pane.host.addr}.\x1b[0m\r\n`);
+      pane.usedSaved = hostId;
+      pane.term.write(`\x1b[90mUsing the passphrase saved in this browser for ${addr}.\x1b[0m\r\n`);
       ws.send(JSON.stringify({ t: "passphrase", value: saved }));
       return;
     }
   }
-  if (pane.ws === ws) promptPassphrase(pane, retry, remaining);
+  if (pane.ws === ws) promptPassphrase(pane, retry, remaining, addr);
 }
 
 function typePassphrase(pane: Pane, data: string) {
@@ -917,7 +922,7 @@ function typePassphrase(pane: Pane, data: string) {
   if (action === "submit") {
     pane.passphrase = undefined;
     pane.term.write("\r\n");
-    if (autoPassEnabled()) pane.pendingSave = value;
+    if (autoPassEnabled() && pane.asking) (pane.pendingSave ??= new Map()).set(pane.asking, value);
     if (pane.ws?.readyState === WebSocket.OPEN) pane.ws.send(JSON.stringify({ t: "passphrase", value }));
   } else if (action === "cancel") {
     pane.passphrase = undefined;
@@ -931,14 +936,16 @@ function typePassphrase(pane: Pane, data: string) {
 function connect(pane: Pane) {
   pane.el.querySelector(".banner")?.remove();
   pane.passphrase = undefined;
-  pane.usedSaved = false;
+  pane.usedSaved = undefined;
+  pane.asking = undefined;
   pane.pendingSave = undefined;
   pane.state = "connecting";
   pane.info = undefined;
   if (pane.tab.focus === pane) { pane.tab.files.reset(); pane.tab.filesFor = undefined; }
   pane.reason = undefined;
   paintBar(pane);
-  pane.term.write(`\x1b[90mConnecting to ${pane.host.addr}…\x1b[0m\r\n`);
+  const bastionOf = pane.host.via ? hosts.find((h) => h.id === pane.host.via) : undefined;
+  pane.term.write(`\x1b[90m${bastionOf ? `Connecting to ${pane.host.addr} through ${bastionOf.name} (${bastionOf.addr})` : `Connecting to ${pane.host.addr}`}…\x1b[0m\r\n`);
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = new URLSearchParams({ host: pane.host.id, cols: String(pane.term.cols), rows: String(pane.term.rows) });
   const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
@@ -952,7 +959,7 @@ function connect(pane: Pane) {
     if (ev.data instanceof ArrayBuffer) { pane.term.write(new Uint8Array(ev.data)); return; }
     const msg = JSON.parse(ev.data);
     if (msg.t === "passphrase") {
-      void handlePassphraseRequest(pane, ws, !!msg.retry, Number(msg.remaining) || 0);
+      void handlePassphraseRequest(pane, ws, { hostId: String(msg.hostId ?? pane.host.id), addr: String(msg.addr ?? pane.host.addr), retry: !!msg.retry, remaining: Number(msg.remaining) || 0 });
       if (msg.retry && pane.tab === active) loadSignins(pane.host.id);
       return;
     }
@@ -963,11 +970,9 @@ function connect(pane: Pane) {
       if (msg.reason) pane.reason = msg.reason;
       if (msg.state === "connected") {
         pane.fit.fit();
-        if (pane.pendingSave !== undefined) {
-          const v = pane.pendingSave;
-          pane.pendingSave = undefined;
-          if (autoPassEnabled()) savePassphrase(scope, pane.host.id, v).then(renderAutoPass).catch(() => {});
-        }
+        const pending = pane.pendingSave;
+        pane.pendingSave = undefined;
+        if (pending && autoPassEnabled()) for (const [hostId, v] of pending) savePassphrase(scope, hostId, v).then(renderAutoPass).catch(() => {});
       }
       leaveFilesIfGone(pane.tab);
       const t = pane.tab;
@@ -1116,7 +1121,7 @@ function renderDrawer() {
   const i = t?.info;
   $("kv").innerHTML = !tab || !t ? `<dt>—</dt><dd>No session</dd>` :
     row("Host", i?.host ?? t.host.addr) + row("User", i?.user ?? t.host.addr.split("@")[0]) +
-    row("Auth", i?.auth ?? "—") + row("Cipher", i?.cipher || "—") + row("Host key", i?.hostKey ?? "—") +
+    row("Auth", i?.auth ?? "—") + row("Route", i?.route ?? "—") + row("Cipher", i?.cipher || "—") + row("Host key", i?.hostKey ?? "—") +
     row("Since", i ? new Date(i.since).toLocaleTimeString() : "—") + row("State", t.state + (t.reason && t.state === "closed" ? ` (${t.reason})` : "")) +
     (panesOf(tab).length > 1 ? row("Panes", String(panesOf(tab).length)) : "");
 }
@@ -1494,6 +1499,7 @@ const hostEditor = initAddHost({
   button: $("add-host"),
   scrim: $("host-scrim"),
   groups: () => [...new Set(hosts.map((h) => h.group))],
+  hosts: () => hosts,
   onChanged: async () => {
     hosts = await api<Host[]>("/api/hosts");
     renderAll();

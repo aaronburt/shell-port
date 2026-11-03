@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
-import { Client, type ConnectConfig, type ClientChannel, type SFTPWrapper } from "ssh2";
+import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from "ssh2";
 import type { Socket } from "node:net";
 import type { WebSocket, RawData } from "ws";
-import { resolveSecret, hostNeedsPassphrase, type HostConfig, type LoadedConfig } from "./config.js";
+import type { HostConfig, LoadedConfig } from "./config.js";
+import { addrOf, fingerprint, hopAuth, keyPinned, type HopAuth } from "./hop.js";
 import type { RateLimiter, UserSession } from "./sessions.js";
 import { audit } from "./log.js";
 import type { ActivityLog } from "./activity.js";
@@ -30,8 +31,14 @@ export interface TerminalInfo {
   close(reason: string): void;
 }
 
-function fingerprint(key: Buffer): string {
-  return "SHA256:" + crypto.createHash("sha256").update(key).digest("base64").replace(/=+$/, "");
+type Role = "bastion" | "target";
+
+interface Hop {
+  role: Role;
+  host: HostConfig;
+  client: Client;
+  auth: HopAuth;
+  tries: number;
 }
 
 function clampDim(n: unknown, def: number, max: number) {
@@ -59,6 +66,7 @@ export function openTerminal(opts: {
   ws: WebSocket;
   cfg: LoadedConfig;
   host: HostConfig;
+  route?: HostConfig;
   session: UserSession;
   activity: ActivityLog;
   auditLog: AuditLog;
@@ -69,7 +77,7 @@ export function openTerminal(opts: {
   rows: unknown;
   onClose: () => void;
 }): TerminalInfo {
-  const { ws, cfg, host, session, ip } = opts;
+  const { ws, cfg, host, route, session, ip } = opts;
   const send = (msg: object) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const started = Date.now();
   let lastActivity = Date.now();
@@ -79,12 +87,13 @@ export function openTerminal(opts: {
   let bytesIn = 0;
   let bytesOut = 0;
   let mismatch = false;
-  let awaitingPassphrase = false;
-  let passphraseTries = 0;
+  let awaiting: Hop | undefined;
   let passphraseTimer: NodeJS.Timeout | undefined;
   let drainTimer: NodeJS.Timeout | undefined;
   let inputPaused = false;
   let connectStart = 0;
+  let bastionUp = false;
+  let opened = false;
   const phases: Record<string, number> = {};
   const mark = (name: string) => { phases[name] = Date.now() - connectStart; };
 
@@ -111,10 +120,10 @@ export function openTerminal(opts: {
   const handle: TerminalInfo = { id, user: session.login, hostId: host.id, files, sftp, touch, close: (reason) => close(reason) };
 
   const ssh = new Client();
-  const auditBase = { user: session.login, host: host.id, ip };
-  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string) =>
-    opts.auditLog.add({ kind, user: session.login, ip, host: host.name, detail });
-  let opened = false;
+  const bastion = route ? new Client() : undefined;
+  const auditFor = (h: HostConfig) => ({ user: session.login, host: h.id, ip });
+  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string, h: HostConfig = host) =>
+    opts.auditLog.add({ kind, user: session.login, ip, host: h.name, detail });
 
   const close = (reason: string) => {
     if (closed) return;
@@ -124,10 +133,12 @@ export function openTerminal(opts: {
     clearInterval(drainTimer);
     try { stream?.close(); } catch {}
     ssh.end();
+    bastion?.end();
     send({ t: "status", state: "closed", reason });
     if (ws.readyState === ws.OPEN) ws.close(1000, reason.slice(0, 120));
-    audit("terminal.close", { ...auditBase, reason, seconds: Math.round((Date.now() - started) / 1000), bytesIn, bytesOut });
+    audit("terminal.close", { ...auditFor(host), reason, seconds: Math.round((Date.now() - started) / 1000), bytesIn, bytesOut });
     if (opened) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`);
+    if (route && bastionUp) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`, route);
     opts.onClose();
   };
 
@@ -136,38 +147,24 @@ export function openTerminal(opts: {
     if (idleMs > 0 && Date.now() - lastActivity > idleMs) close(`Closed after ${formatDuration(idleMs)} idle`);
   }, 1000);
 
-  const conn: ConnectConfig = {
-    host: host.host,
-    port: host.port,
-    username: host.username,
-    readyTimeout: 15_000,
-    keepaliveInterval: 20_000,
-    keepaliveCountMax: 3,
-    hostVerifier: (key: Buffer) => {
-      if (!host.hostKeyFingerprints?.length) return cfg.security.allowUnpinnedHostKeys;
-      const fp = fingerprint(key);
-      const ok = host.hostKeyFingerprints.some((p) => p.replace(/=+$/, "") === fp);
-      if (!ok) {
-        mismatch = true;
-        audit("terminal.hostkey_mismatch", { ...auditBase, presented: fp });
-      }
-      return ok;
-    },
+  const hopFor = (role: Role, h: HostConfig, client: Client): Hop => {
+    const auth = hopAuth(h, cfg.baseDir);
+    auth.conn.hostVerifier = (key: Buffer) => {
+      if (keyPinned(h, key, cfg.security.allowUnpinnedHostKeys)) return true;
+      mismatch = true;
+      audit("terminal.hostkey_mismatch", { ...auditFor(h), role, presented: fingerprint(key) });
+      return false;
+    };
+    return { role, host: h, client, auth, tries: 0 };
   };
-  const needsPassphrase = hostNeedsPassphrase(host);
-  let keyText: string | undefined;
+
+  let targetHop: Hop;
+  let bastionHop: Hop | undefined;
   try {
-    if (host.auth.type === "key") {
-      keyText = resolveSecret(host.auth.privateKey, cfg.baseDir, "privateKey", true);
-      if (!needsPassphrase) {
-        conn.privateKey = keyText;
-        if (host.auth.passphrase) conn.passphrase = resolveSecret(host.auth.passphrase, cfg.baseDir, "passphrase");
-      }
-    } else {
-      conn.password = resolveSecret(host.auth.password, cfg.baseDir, "password");
-    }
+    bastionHop = route && bastion ? hopFor("bastion", route, bastion) : undefined;
+    targetHop = hopFor("target", host, ssh);
   } catch (e) {
-    audit("terminal.error", { ...auditBase, error: (e as Error).message });
+    audit("terminal.error", { ...auditFor(host), error: (e as Error).message });
     trail("ssh_failed", "Credentials are misconfigured on the server");
     send({ t: "error", message: "This host's credentials are misconfigured on the server." });
     queueMicrotask(() => close("Configuration error"));
@@ -190,9 +187,9 @@ export function openTerminal(opts: {
       }
       stream = s;
       mark("shellMs");
-      audit("terminal.open", { ...auditBase, ...phases });
+      audit("terminal.open", { ...auditFor(host), ...phases, ...(route ? { via: route.id } : {}) });
       opened = true;
-      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}`);
+      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (targetHop.auth.needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}${route ? `, through ${route.name}` : ""}`);
       send({
         t: "status",
         state: "connected",
@@ -202,8 +199,9 @@ export function openTerminal(opts: {
           host: `${host.host}:${host.port}`,
           user: host.username,
           auth: host.auth.type === "key"
-            ? needsPassphrase ? "key, passphrase entered in browser" : "server-managed key"
+            ? targetHop.auth.needsPassphrase ? "key, passphrase entered in browser" : "server-managed key"
             : "server-managed password",
+          route: route ? `Through ${route.name} (${addrOf(route)})` : "Direct",
           cipher,
           hostKey: host.hostKeyFingerprints?.length ? "pinned" : "not pinned",
           since: new Date().toISOString(),
@@ -232,12 +230,28 @@ export function openTerminal(opts: {
 
   ssh.on("error", (err) => {
     if (closed) return;
-    audit("terminal.error", { ...auditBase, error: err.message });
+    audit("terminal.error", { ...auditFor(host), error: err.message });
     trail("ssh_failed", friendlyError(err, mismatch));
     send({ t: "error", message: friendlyError(err, mismatch) });
     close("Connection failed");
   });
   ssh.on("close", () => close("Connection closed"));
+
+  if (route && bastion) {
+    bastion.on("ready", () => {
+      bastionUp = true;
+      trail("ssh_connect", `Tunnel to ${host.name} (${addrOf(host)}), as ${route.username}`, route);
+      startHop(targetHop);
+    });
+    bastion.on("error", (err) => {
+      if (closed) return;
+      audit("terminal.error", { ...auditFor(route), error: err.message });
+      trail("ssh_failed", friendlyError(err, mismatch), route);
+      send({ t: "error", message: `Bastion ${route.name}: ${friendlyError(err, mismatch)}` });
+      close("Bastion connection failed");
+    });
+    bastion.on("close", () => close("Bastion connection closed"));
+  }
 
   ws.on("message", (data: RawData, isBinary: boolean) => {
     if (isBinary) {
@@ -261,7 +275,7 @@ export function openTerminal(opts: {
     let msg: any;
     try { msg = JSON.parse(data.toString()); } catch { return; }
     if (msg?.t === "passphrase") {
-      if (!awaitingPassphrase) return;
+      if (!awaiting) return;
       return submitPassphrase(typeof msg.value === "string" ? msg.value : "");
     }
     if (msg?.t === "resize") {
@@ -272,8 +286,8 @@ export function openTerminal(opts: {
   ws.on("close", () => close("Browser disconnected"));
   ws.on("error", () => close("Browser connection error"));
 
-  function askPassphrase(retry: boolean, restartTimer = true) {
-    awaitingPassphrase = true;
+  function askPassphrase(hop: Hop, retry: boolean, restartTimer = true) {
+    awaiting = hop;
     if (restartTimer) {
       clearTimeout(passphraseTimer);
       passphraseTimer = setTimeout(() => {
@@ -281,56 +295,82 @@ export function openTerminal(opts: {
         close("Passphrase timeout");
       }, opts.timing?.passphraseWaitMs ?? PASSPHRASE_WAIT_MS);
     }
-    send({ t: "passphrase", retry, remaining: PASSPHRASE_TRIES - passphraseTries });
+    send({ t: "passphrase", retry, remaining: PASSPHRASE_TRIES - hop.tries, hostId: hop.host.id, addr: addrOf(hop.host), role: hop.role });
   }
 
-  function failPassphrase(restartTimer: boolean) {
-    passphraseTries++;
-    audit("terminal.passphrase_failed", { ...auditBase, attempt: passphraseTries });
-    trail("passphrase_failed", `Attempt ${passphraseTries} of ${PASSPHRASE_TRIES}`);
-    opts.activity.add({ kind: "passphrase_failed", githubId: session.githubId, ip, host: host.id });
-    if (passphraseTries >= PASSPHRASE_TRIES) {
+  function failPassphrase(hop: Hop, restartTimer: boolean) {
+    hop.tries++;
+    audit("terminal.passphrase_failed", { ...auditFor(hop.host), attempt: hop.tries });
+    trail("passphrase_failed", `Attempt ${hop.tries} of ${PASSPHRASE_TRIES}`, hop.host);
+    opts.activity.add({ kind: "passphrase_failed", githubId: session.githubId, ip, host: hop.host.id });
+    if (hop.tries >= PASSPHRASE_TRIES) {
       send({ t: "error", message: "Incorrect passphrase." });
       return close("Incorrect passphrase");
     }
-    askPassphrase(true, restartTimer);
+    askPassphrase(hop, true, restartTimer);
   }
 
   function submitPassphrase(value: string) {
-    if (!opts.passphraseLimiter.hit(`${session.githubId}:${host.id}`)) {
-      audit("terminal.passphrase_throttled", auditBase);
-      trail("ssh_failed", "Too many incorrect passphrases, throttled");
+    const hop = awaiting;
+    if (!hop) return;
+    if (!opts.passphraseLimiter.hit(`${session.githubId}:${hop.host.id}`)) {
+      audit("terminal.passphrase_throttled", auditFor(hop.host));
+      trail("ssh_failed", "Too many incorrect passphrases, throttled", hop.host);
       send({ t: "error", message: "Too many incorrect passphrases. Try again later." });
       return close("Passphrase attempts throttled");
     }
-    if (!value || value.length > MAX_PASSPHRASE_LEN) return failPassphrase(false);
-    awaitingPassphrase = false;
+    if (!value || value.length > MAX_PASSPHRASE_LEN) return failPassphrase(hop, false);
+    awaiting = undefined;
     clearTimeout(passphraseTimer);
-    conn.privateKey = keyText;
-    conn.passphrase = value;
+    hop.auth.conn.privateKey = hop.auth.keyText;
+    hop.auth.conn.passphrase = value;
     connectStart = Date.now();
+    connectHop(hop, true);
+  }
+
+  function startHop(hop: Hop) {
+    if (hop.auth.needsPassphrase) return askPassphrase(hop, false);
+    connectHop(hop, false);
+  }
+
+  function connectHop(hop: Hop, fromPassphrase: boolean) {
+    if (hop.role === "bastion" || !route || !bastion) return connectClient(hop, fromPassphrase);
+    const through = { route, client: bastion };
+    through.client.forwardOut("127.0.0.1", 0, hop.host.host, hop.host.port ?? 22, (err, channel) => {
+      if (closed) {
+        channel?.close();
+        return;
+      }
+      if (err || !channel) {
+        audit("terminal.error", { ...auditFor(hop.host), error: `tunnel: ${err?.message ?? "no channel"}` });
+        trail("ssh_failed", `Could not reach ${hop.host.name} through ${through.route.name}`, hop.host);
+        send({ t: "error", message: `Could not reach ${hop.host.name} through ${through.route.name}.` });
+        return close("Could not reach the host through the bastion");
+      }
+      connectClient(hop, fromPassphrase, channel);
+    });
+  }
+
+  function connectClient(hop: Hop, fromPassphrase: boolean, sock?: ClientChannel) {
+    const conn: ConnectConfig = sock ? { ...hop.auth.conn, sock } : hop.auth.conn;
     try {
-      ssh.connect(conn);
+      hop.client.connect(conn);
     } catch (e) {
-      conn.passphrase = undefined;
-      if (/^Cannot parse privateKey/.test((e as Error).message)) return failPassphrase(true);
-      audit("terminal.error", { ...auditBase, error: (e as Error).message });
+      sock?.destroy();
+      hop.auth.conn.passphrase = undefined;
+      if (fromPassphrase && /^Cannot parse privateKey/.test((e as Error).message)) return failPassphrase(hop, true);
+      audit("terminal.error", { ...auditFor(hop.host), error: (e as Error).message });
       send({ t: "error", message: "SSH connection failed." });
       return close("Connection failed");
     }
-    mark("decryptMs");
-    send({ t: "status", state: "connecting" });
-    conn.passphrase = undefined;
-    keyText = undefined;
+    if (hop.role === "target") mark(fromPassphrase ? "decryptMs" : "connectCallMs");
+    hop.auth.conn.passphrase = undefined;
+    hop.auth.keyText = undefined;
   }
 
   send({ t: "status", state: "connecting" });
-  if (needsPassphrase) askPassphrase(false);
-  else {
-    connectStart = Date.now();
-    ssh.connect(conn);
-    mark("connectCallMs");
-  }
+  connectStart = Date.now();
+  startHop(bastionHop ?? targetHop);
 
   return handle;
 }

@@ -519,6 +519,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
         group: h.group ?? "Hosts",
         tag: h.tag ?? "",
         addr: `${h.username}@${h.host}${h.port !== 22 ? `:${h.port}` : ""}`,
+        via: h.via ?? "",
       })),
     );
   });
@@ -583,7 +584,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     rec("host_added", req, s.login, { host: host.name, detail: target(host) });
     recordKey(req, s, host as never, body);
     audit("host.add", {
-      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
+      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`, via: host.via ?? "",
       key: keySource(body), store: store.kind,
     });
     res.status(201).json({ id: host.id });
@@ -603,7 +604,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     rec("host_edited", req, s.login, { host: host.name, detail: target(host) });
     recordKey(req, s, host as never, body);
     audit("host.edit", {
-      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`,
+      ip: ipOf(req), user: s.login, githubId: s.githubId, host: host.id, target: `${host.username}@${host.host}:${host.port}`, via: host.via ?? "",
       key: keySource(body), store: store.kind,
     });
     res.json({ id: host.id });
@@ -735,8 +736,11 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     if (req.headers.origin !== cfg.server.publicUrl) return reject(403, "Forbidden");
     const s = getSession(req.headers.cookie);
     if (!s) return reject(401, "Unauthorized");
-    const host = hostsForUser(cfg, who(s)).find((h) => h.id === url.searchParams.get("host"));
+    const visible = hostsForUser(cfg, who(s));
+    const host = visible.find((h) => h.id === url.searchParams.get("host"));
     if (!host) return reject(404, "Not Found");
+    const route = host.via ? visible.find((h) => h.id === host.via) : undefined;
+    if (host.via && !route) return reject(403, "Forbidden");
     const mine = terminals.get(s.githubId) ?? new Set();
     if (mine.size >= cfg.limits.maxTerminalsPerUser) return reject(429, "Too Many Requests");
 
@@ -746,7 +750,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       const bySess = terminalsBySession.get(s.id) ?? new Set<TerminalInfo>();
       terminalsBySession.set(s.id, bySess);
       const t = openTerminal({
-        ws, cfg, host, session: s, activity, auditLog, passphraseLimiter, ip, timing: opts.timing,
+        ws, cfg, host, route, session: s, activity, auditLog, passphraseLimiter, ip, timing: opts.timing,
         cols: url.searchParams.get("cols"),
         rows: url.searchParams.get("rows"),
         onClose: () => {

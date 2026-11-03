@@ -28,6 +28,7 @@ export interface HostConfig {
   hostKeyFingerprints?: string[];
   allowedUsers?: Array<string | number>;
   files?: boolean;
+  via?: string;
 }
 
 export interface AppConfig {
@@ -220,6 +221,15 @@ export function validateHost(h: HostConfig, baseDir: string, security: { allowUn
   if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
 }
 
+export function validateRoute(h: HostConfig, hosts: HostConfig[]) {
+  if (h.via === undefined) return;
+  if (typeof h.via !== "string" || !ID_RE.test(h.via)) fail(`host ${h.id}: via must be the id of another host`);
+  if (h.via === h.id) fail(`host ${h.id}: a host cannot connect through itself`);
+  const bastion = hosts.find((x) => x.id === h.via);
+  if (!bastion) fail(`host ${h.id}: via ${h.via} is not a host in this config`);
+  if (bastion.via !== undefined) fail(`host ${h.id}: via ${h.via} connects through another host, and only one hop is supported`);
+}
+
 function validatePasskeys(list: unknown, what: string): PasskeyRecord[] {
   if (list === undefined) return [];
   if (!Array.isArray(list)) fail(`${what} passkeys must be an array`);
@@ -266,6 +276,7 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
   if (!Array.isArray(hosts) || !hosts.length) fail("hosts must be a non-empty array");
   const seen = new Set<string>();
   for (const h of hosts) validateHost(h, baseDir, security, seen);
+  for (const h of hosts) validateRoute(h, hosts);
 
   return {
     baseDir,
