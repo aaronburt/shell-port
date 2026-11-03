@@ -387,4 +387,3 @@ test("UI: signing out lands on the sign-in page and the session is dead", async 
   assert.equal((await fetch(base + "/api/me", { headers: { cookie: `sp_sid=${sid}` } })).status, 401);
   assert.equal(await wsStatus(`sp_sid=${sid}`, "plain", base), 401);
 });
-

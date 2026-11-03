@@ -192,4 +192,3 @@ test("idle terminals are closed after the idle timeout (shortened for the run)",
     timing.idleTimeoutMs = undefined;
   }
 });
-

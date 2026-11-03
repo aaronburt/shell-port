@@ -412,4 +412,3 @@ test("UI: the Sign-ins panel shows the other session and signs it out, closing i
   await until("no other sessions", async () => !(await ui.locator("#signins").innerText()).includes("other session"));
   await peerCtx.close();
 });
-

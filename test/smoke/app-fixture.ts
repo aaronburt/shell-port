@@ -208,4 +208,3 @@ export function remoteExec(cmd: string): Promise<string> {
 export async function sftpFixture(tag: string) {
   await remoteExec(`mkdir -p ~/fx-${tag}/sub && echo hello-${tag} > ~/fx-${tag}/note.txt && echo bye > ~/fx-${tag}/gone.txt && yes aaaaaaaaa | head -c 300000 > ~/fx-${tag}/long.txt; printf 'a\\0b' > ~/fx-${tag}/blob.bin`);
 }
-

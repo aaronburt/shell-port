@@ -149,4 +149,3 @@ test("the black-box smoke script passes against this instance, rate limit includ
   assert.match(output, /Rate limiting \(opt-in\)/);
   assert.match(output, /limited after \d+ requests/);
 });
-

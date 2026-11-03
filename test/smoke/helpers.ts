@@ -8,4 +8,3 @@ export async function until(what: string, fn: () => unknown | Promise<unknown>, 
     await sleep(40);
   }
 }
-
