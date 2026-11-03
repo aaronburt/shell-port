@@ -1,6 +1,19 @@
 import * as esbuild from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+let version;
+if (process.env.APP_VERSION) {
+  if (!/^\d+\.\d+(?:\.\d+)?$/.test(process.env.APP_VERSION)) throw new Error("APP_VERSION must be a numeric release version");
+  version = `v${process.env.APP_VERSION}`;
+} else {
+  try {
+    version = execFileSync("git", ["describe", "--tags", "--match", "v[0-9]*", "--always", "--dirty"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    version = `${JSON.parse(fs.readFileSync("package.json", "utf8")).version} (development)`;
+  }
+}
 
 fs.rmSync("dist", { recursive: true, force: true });
 fs.mkdirSync("dist/public/assets", { recursive: true });
@@ -19,6 +32,7 @@ const client = await esbuild.build({
 
 await esbuild.build({
   entryPoints: ["src/server/index.ts"],
+  define: { __SHELLPORT_BUILD_VERSION__: JSON.stringify(version) },
   bundle: true,
   platform: "node",
   format: "esm",
@@ -61,4 +75,4 @@ for (const [file, entry] of [["app.html", "app"], ["login.html", "login"], ["tot
   fs.writeFileSync(`dist/public/${file}`, html);
 }
 fs.copyFileSync("public/favicon.svg", "dist/public/assets/favicon.svg");
-console.log("built dist/");
+console.log(`built dist/ (${version})`);

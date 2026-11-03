@@ -214,6 +214,8 @@ A running server keeps the config it unsealed with. After `edit` or `import`, se
 
 ## Development
 
+Account → **About Shellport** shows the running version, links to its release notes, and links to the GitHub repository. Release images embed the version assigned by CI. Source builds show their Git description (including local changes); builds without Git metadata show the package version marked as development.
+
 You need Node.js 24 or newer. Node.js 26 LTS is recommended and is used by the Docker image and CI.
 
 ```sh
@@ -237,6 +239,10 @@ npm run smoke:full       # real SSH containers and a headless browser (needs Doc
 ```
 
 Set `SMOKE_SCREENSHOTS=<folder>` with `npm run smoke:full` to save UI screenshots.
+
+## Writing release notes
+
+For each user-facing change, add a new Markdown file under [`release-notes/`](release-notes/README.md) describing the changes and what users should do after updating. CI validates the format. Each release combines patch notes changed since the previous release tag with GitHub's generated pull-request changelog and comparison link.
 
 ## Audit log
 

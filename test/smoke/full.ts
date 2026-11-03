@@ -1058,6 +1058,15 @@ test("UI: the avatar opens the account as a tab with the display switch, the sho
   const page = ui.locator("#page-account");
   assert.equal(await ui.locator("#acct-title").innerText(), "ui-user");
   assert.match(await page.innerText(), /Signed in with GitHub/);
+  const about = (await getJson(`sp_sid=${(await sidOf(uiCtx))!}`, "/api/me")).body;
+  assert.ok(about.version);
+  assert.equal(await page.locator("#acct-version").innerText(), about.version);
+  assert.equal(await page.locator("#acct-release-notes").getAttribute("href"), about.releaseNotesUrl);
+  assert.equal(await page.locator("#acct-github").getAttribute("href"), "https://github.com/aaronburt/shell-port");
+  for (const id of ["acct-release-notes", "acct-github"]) {
+    assert.equal(await page.locator(`#${id}`).getAttribute("target"), "_blank");
+    assert.match((await page.locator(`#${id}`).getAttribute("rel"))!, /noopener/);
+  }
   const accountWidth = await page.evaluate((el) => ({
     available: el.clientWidth,
     content: el.querySelector(".acct-body")!.getBoundingClientRect().width,
