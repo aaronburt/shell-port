@@ -214,7 +214,7 @@ A running server keeps the config it unsealed with. After `edit` or `import`, se
 
 ## Development
 
-You need Node.js 24 or newer.
+You need Node.js 24 or newer. Node.js 26 LTS is recommended and is used by the Docker image and CI.
 
 ```sh
 npm ci
