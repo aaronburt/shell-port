@@ -14,7 +14,6 @@ fetch("/auth/totp").then(async (r) => {
 const codeEl = $<HTMLInputElement>("code");
 let busy = false;
 codeEl.addEventListener("input", () => {
-  // Auto-submit once 6 digits are in (typed, pasted or autofilled).
   if (codeEl.value.replace(/\D/g, "").length === 6 && !busy) $<HTMLFormElement>("form").requestSubmit();
 });
 

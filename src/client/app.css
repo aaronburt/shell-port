@@ -179,6 +179,15 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .acct-sec h5 { margin: 0 0 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
 .acct-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .acct-row strong { font-weight: 500; }
+.acct-row > div:first-child { min-width: 0; }
+.acct-row + .acct-row { margin-top: 14px; }
+.acct-help { display: inline-flex; vertical-align: middle; margin-left: 5px; }
+.info-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); }
+.info-btn svg { width: 18px; height: 18px; }
+.info-btn:hover, .info-btn:focus-visible, .info-btn[aria-expanded="true"] { color: var(--accent); background: var(--panel-2); }
+.info-tip { position: fixed; inset: auto; margin: 0; width: max-content; max-width: min(320px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--fg); box-shadow: 0 8px 24px rgba(0,0,0,.3); font-family: var(--f-ui); font-size: 12.5px; font-weight: 400; line-height: 1.5; text-transform: none; letter-spacing: normal; }
+.acct-heading { display: flex; align-items: center; }
+.acct-caution { margin: 4px 0 14px; color: var(--warn); font-size: 12px; }
 .acct-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .switch { position: relative; flex: none; width: 38px; height: 22px; padding: 0; border: 0; border-radius: 11px; background: var(--line); cursor: pointer; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .15s ease; }
