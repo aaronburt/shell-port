@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import QRCode from "qrcode";
 import { newSecret, otpauthUri, base32Decode } from "./totp.js";
-import { validateConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
+import { loadSealedConfig, type LoadedConfig } from "./config.js";
 import { RateLimiter } from "./sessions.js";
 import { checkPassphraseStrength, sealVaultKeyed } from "./vault.js";
 import { inlineSecrets, writeFileAtomic } from "./vaultops.js";
@@ -130,9 +130,9 @@ export interface SetupAppOptions {
   token: string;
   configPath: string;
   publicDir: string;
-  vaultPath?: string;
+  vaultPath: string;
   trustProxy?: boolean | number;
-  onSaved?: (cfg: LoadedConfig, vaultPath?: string, dek?: Buffer) => void;
+  onSaved?: (cfg: LoadedConfig, vaultPath: string, dek: Buffer) => void;
 }
 
 export function createSetupApp(opts: SetupAppOptions) {
@@ -231,67 +231,33 @@ export function createSetupApp(opts: SetupAppOptions) {
       return res.status(400).json({ ok: false, errors: result.errors });
     }
 
-    if (passphrase !== undefined) {
-      if (!opts.vaultPath) return res.status(400).json({ ok: false, error: "Sealing is not available here." });
-      const weak = checkPassphraseStrength(passphrase);
-      if (weak) return res.status(400).json({ ok: false, error: weak });
-      if (fs.existsSync(opts.vaultPath)) return res.status(409).json({ ok: false, error: `${opts.vaultPath} already exists.` });
-      let sealed: LoadedConfig;
-      let json: string;
-      try {
-        json = JSON.stringify(inlineSecrets(config, path.dirname(path.resolve(opts.configPath))), null, 2);
-        sealed = loadSealedConfig(json);
-      } catch (e) {
-        return res.status(400).json({ ok: false, error: (e as Error).message });
-      }
-      let dek: Buffer;
-      try {
-        const dir = path.dirname(path.resolve(opts.vaultPath));
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const keyed = sealVaultKeyed(json, passphrase);
-        dek = keyed.dek;
-        writeFileAtomic(path.resolve(opts.vaultPath), keyed.file);
-      } catch (e) {
-        return res.status(403).json({ ok: false, readOnly: true, error: `Cannot write to ${opts.vaultPath}: ${(e as Error).message}` });
-      }
-      audit("setup.sealed", { path: opts.vaultPath });
-      completed = true;
-      res.json({ ok: true, saved: true, sealed: true, canTransition: Boolean(opts.onSaved) });
-      if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath, dek), 500);
-      return;
-    }
-
-    const resolved = path.resolve(opts.configPath);
-    let loaded: LoadedConfig;
+    if (!passphrase) return res.status(400).json({ ok: false, error: "An encryption passphrase is required." });
+    const weak = checkPassphraseStrength(passphrase);
+    if (weak) return res.status(400).json({ ok: false, error: weak });
+    if (fs.existsSync(opts.vaultPath)) return res.status(409).json({ ok: false, error: `${opts.vaultPath} already exists.` });
+    let sealed: LoadedConfig;
+    let json: string;
     try {
-      loaded = validateConfig(config, path.dirname(resolved));
+      json = JSON.stringify(inlineSecrets(config, path.dirname(path.resolve(opts.configPath))), null, 2);
+      sealed = loadSealedConfig(json);
     } catch (e) {
       return res.status(400).json({ ok: false, error: (e as Error).message });
     }
+    let dek: Buffer;
     try {
-      const dir = path.dirname(resolved);
+      const dir = path.dirname(path.resolve(opts.vaultPath));
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      writeFileAtomic(resolved, JSON.stringify(config, null, 2) + "\n");
+      const keyed = sealVaultKeyed(json, passphrase);
+      dek = keyed.dek;
+      writeFileAtomic(path.resolve(opts.vaultPath), keyed.file);
     } catch (e) {
-      return res.status(403).json({
-        ok: false,
-        readOnly: true,
-        error: `Cannot write to ${opts.configPath}: ${(e as Error).message}`,
-      });
+      return res.status(403).json({ ok: false, readOnly: true, error: `Cannot write to ${opts.vaultPath}: ${(e as Error).message}` });
     }
-
-    audit("setup.saved", { path: opts.configPath });
+    audit("setup.sealed", { path: opts.vaultPath });
     completed = true;
-
-    res.json({
-      ok: true,
-      saved: true,
-      canTransition: Boolean(loaded && opts.onSaved),
-    });
-
-    if (loaded && opts.onSaved) {
-      setTimeout(() => opts.onSaved?.(loaded!), 500);
-    }
+    res.json({ ok: true, saved: true, sealed: true, canTransition: Boolean(opts.onSaved) });
+    if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath, dek), 500);
+    return;
   });
 
   app.use("/assets", express.static(path.join(opts.publicDir, "assets"), {

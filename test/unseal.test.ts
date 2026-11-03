@@ -247,7 +247,7 @@ test("a sealed config refuses env and file references", () => {
   assert.throws(() => loadSealedConfig("not json"), /valid JSON/);
 });
 
-test("boot: setup, plain, sealed and the error cases", () => {
+test("boot: setup, migration, sealed and the error cases", () => {
   const sub = fs.mkdtempSync(path.join(dir, "boot-"));
   const configPath = path.join(sub, "config.json");
   const vault = path.join(sub, "vault.sealed");
@@ -256,7 +256,7 @@ test("boot: setup, plain, sealed and the error cases", () => {
   assert.equal(mode().mode, "setup");
 
   fs.writeFileSync(configPath, "{}");
-  assert.equal(mode().mode, "plain");
+  assert.equal(mode().mode, "migrate");
   assert.equal(mode(true).mode, "setup");
 
   fs.writeFileSync(vault, sealVault(PLAIN, PASS, FAST));

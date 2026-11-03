@@ -119,7 +119,7 @@ export function initAddHost(opts: AddHostOptions) {
         <div class="field full"><label id="ah-src-label">Key</label><div class="seg" role="group" aria-labelledby="ah-src-label">${editing ? seg("keep", keepLabel) : ""}${seg("existing", "Use existing key")}${seg("upload", "Upload new key")}</div></div>
         ${keyPart}
         ${warn}
-        <p class="fine full">${form.mode === "upload" ? "The key is stored encrypted in the vault, or in the keys folder next to config.json when the server is not sealed. " : ""}A key with a passphrase asks for it in the terminal each time you connect. It is never stored.${editing ? "" : " The host's SSH key is read now and pinned."}</p>
+        <p class="fine full">${form.mode === "upload" ? "The key is stored encrypted in the vault. " : ""}A key with a passphrase asks for it in the terminal each time you connect. It is never stored.${editing ? "" : " The host's SSH key is read now and pinned."}</p>
         <p class="form-err full" id="ah-err" role="alert" ${form.error ? "" : "hidden"}>${esc(form.error)}</p>
       </div>
       <div class="modal-foot">${editing ? `<button type="button" class="btn ghost danger" id="ah-del">Delete host</button>` : ""}<button type="button" class="btn ghost" id="ah-cancel">Cancel</button><button type="submit" class="btn" id="ah-save" ${(needAck && !form.ack) || form.busy ? "disabled" : ""}>${form.busy ? "Saving…" : editing ? "Save changes" : "Add host"}</button></div>

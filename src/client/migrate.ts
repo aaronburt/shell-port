@@ -6,10 +6,9 @@ const code = $<HTMLInputElement>("code");
 const pass = $<HTMLInputElement>("pass");
 const pass2 = $<HTMLInputElement>("pass2");
 const go = $<HTMLButtonElement>("go");
-const skip = $<HTMLButtonElement>("skip");
 const show = (m: string) => { err.textContent = m; err.hidden = false; };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const lock = (on: boolean) => { for (const el of [code, pass, pass2, go, skip]) el.disabled = on; };
+const lock = (on: boolean) => { for (const el of [code, pass, pass2, go]) el.disabled = on; };
 
 fetch("/api/migrate/status").then((r) => r.json()).then((s) => {
   $("cfg-path").textContent = s.configPath;
@@ -76,9 +75,4 @@ $("form").addEventListener("submit", (e) => {
   e.preventDefault();
   if (pass.value !== pass2.value) return show("The two passphrases do not match.");
   send("/api/migrate", { passphrase: pass.value }, go, "Encrypting…");
-});
-
-skip.addEventListener("click", () => {
-  if (!code.value.trim()) return show("Enter the migration code from the server log first.");
-  send("/api/migrate/skip", {}, skip, "Starting…");
 });

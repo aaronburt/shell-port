@@ -137,7 +137,8 @@ jobs:
             }]
           }
           EOF
-          chmod 644 "$TMP_DIR/config.json"
+          mkdir "$TMP_DIR/vault"
+          chmod 777 "$TMP_DIR/vault"
 
           cleanup() {
             docker logs shellport-ci || true
@@ -153,8 +154,8 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             -p 127.0.0.1:8080:8080 \
-            -e SHELLPORT_MIGRATE=off \
-            -v "$TMP_DIR/config.json:/config/config.json:ro" \
+            -e SHELLPORT_VAULT=/vault/vault.sealed \
+            -v "$TMP_DIR/vault:/vault" \
             shellport:ci
 
           ACTUAL_UNAME=$(docker exec shellport-ci uname -m)
@@ -177,6 +178,24 @@ jobs:
             sleep 1
           done
 
+          export SETUP_CODE=$(docker logs shellport-ci 2>&1 | sed -n 's/^Setup code: //p' | tail -n 1)
+          export SETUP_CONFIG="$TMP_DIR/config.json"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const origin = 'http://127.0.0.1:8080';
+          const response = await fetch(origin + '/api/setup/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: origin, 'X-Shellport-Setup-Code': process.env.SETUP_CODE },
+            body: JSON.stringify({ config: JSON.parse(fs.readFileSync(process.env.SETUP_CONFIG, 'utf8')), passphrase: 'synthetic CI vault passphrase' }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+          let ready = false;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try { if ((await fetch(origin + '/auth/github', { redirect: 'manual' })).status === 302) { ready = true; break; } } catch {}
+          }
+          if (!ready) throw new Error('Encrypted setup did not start the app');
+          NODE
           node scripts/smoke.mjs http://127.0.0.1:8080 --rate-limit
 
       - name: Log in to GitHub Container Registry

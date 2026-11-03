@@ -181,7 +181,7 @@ test("migrating a plain install writes a vault the sealed loader accepts", () =>
   assert.throws(() => migrateToVault({ configPath, vaultPath, passphrase: PASS }), /already exists/);
 });
 
-test("migration mode: needs the code, encrypts the config, and can be skipped", async () => {
+test("migration mode: needs the code, encrypts the config, and refuses a plaintext bypass", async () => {
   const sub = fs.mkdtempSync(path.join(dir, "mig-app-"));
   process.env.OPS_MIG2_TOTP = base32Encode(Buffer.alloc(20, 4));
   const configPath = path.join(sub, "config.json");
@@ -204,7 +204,6 @@ test("migration mode: needs the code, encrypts the config, and can be skipped", 
     token: "tok-123",
     lockout: new UnsealLockout(3, [60_000]),
     onMigrated: (c) => { migrated = c; events.push("migrated"); },
-    onSkip: () => events.push("skipped"),
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -232,9 +231,9 @@ test("migration mode: needs the code, encrypts the config, and can be skipped", 
     assert.equal(stored.users[0].totpSecret, process.env.OPS_MIG2_TOTP);
 
     const skip = await post("/api/migrate/skip", { token: "tok-123" });
-    assert.equal(skip.status, 204);
+    assert.equal(skip.status, 404);
     await new Promise((r) => setTimeout(r, 50));
-    assert.deepEqual(events, ["migrated", "skipped"]);
+    assert.deepEqual(events, ["migrated"]);
   } finally {
     await shutdown(500, "test");
   }
@@ -249,12 +248,11 @@ test("migration mode locks out repeated wrong codes", async () => {
     token: "right",
     lockout: new UnsealLockout(2, [60_000]),
     onMigrated: () => {},
-    onSkip: () => {},
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const post = (token: string) =>
-    fetch(base + "/api/migrate/skip", { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ token }) });
+    fetch(base + "/api/migrate", { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ token }) });
   try {
     assert.equal((await post("a")).status, 401);
     assert.equal((await post("b")).status, 401);
@@ -281,7 +279,6 @@ test("migration mode accepts a passphrase from a trusted proxy that reports HTTP
     token: "tok",
     trustProxy: 1,
     onMigrated: () => {},
-    onSkip: () => {},
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as AddressInfo).port;

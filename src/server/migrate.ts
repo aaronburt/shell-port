@@ -21,7 +21,6 @@ export interface MigrateOptions {
   trustProxy?: boolean | number;
   lockout?: UnsealLockout;
   onMigrated: (cfg: LoadedConfig, dek: Buffer) => void;
-  onSkip: () => void;
 }
 
 function sameToken(given: unknown, expected: string): boolean {
@@ -111,13 +110,6 @@ export function createMigrateApp(opts: MigrateOptions) {
     lockout.succeed();
     audit("migrate.ok", { vault: opts.vaultPath });
     res.on("finish", () => setImmediate(() => opts.onMigrated(cfg, dek)));
-    res.status(204).end();
-  });
-
-  app.post("/api/migrate/skip", requireSameOrigin, body, requireToken, (_req, res) => {
-    lockout.succeed();
-    audit("migrate.skipped", {});
-    res.on("finish", () => setImmediate(opts.onSkip));
     res.status(204).end();
   });
 

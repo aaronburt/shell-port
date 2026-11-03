@@ -3,7 +3,7 @@ import { readVaultHeader, VaultError } from "./vault.js";
 
 export type BootMode =
   | { mode: "setup" }
-  | { mode: "plain" }
+  | { mode: "migrate" }
   | { mode: "sealed"; vaultPath: string }
   | { mode: "error"; message: string };
 
@@ -28,5 +28,5 @@ export function decideBoot(opts: { configPath: string; vaultPath: string; forceS
     return { mode: "sealed", vaultPath: opts.vaultPath };
   }
   if (!configExists || opts.forceSetup) return { mode: "setup" };
-  return { mode: "plain" };
+  return { mode: "migrate" };
 }

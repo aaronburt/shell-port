@@ -1423,8 +1423,8 @@ test("the black-box smoke script passes against this instance, rate limit includ
   assert.match(output, /limited after \d+ requests/);
 });
 
-for (const encrypted of [false, true]) {
-test(`UI: first-run setup requires its code and saves ${encrypted ? "encrypted" : "plain"} configuration without persisting the code`, async () => {
+for (const auth of ["password", "key"]) {
+test(`UI: first-run setup stores ${auth} credentials in the vault without persisting the code`, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-setup-ui-"));
   const file = path.join(dir, "config.json");
   const vault = path.join(dir, "vault.sealed");
@@ -1454,21 +1454,28 @@ test(`UI: first-run setup requires its code and saves ${encrypted ? "encrypted" 
     await page.locator(".user-github").fill("setup-tester");
     await page.getByRole("button", { name: "Generate Key & QR" }).click();
     await until("generated setup TOTP", () => page.locator(".user-secret-val").inputValue().then(v => v.length >= 26));
-    await page.locator('input[name^="host-auth-type-"][value="password"]').check();
-    await page.locator(".host-password-val").fill(passwordEnv);
-    await page.locator(".host-fingerprints").fill("SHA256:synthetic");
-    if (encrypted) {
-      await page.locator("#seal-pass").fill(passphrase);
-      await page.locator("#seal-pass2").fill(passphrase);
+    if (auth === "password") {
+      await page.locator('input[name^="host-auth-type-"][value="password"]').check();
+      await page.locator(".host-password-type").selectOption("literal");
+      await page.locator(".host-password-val").fill("synthetic-only");
     } else {
-      await page.locator("#seal-enable").uncheck();
+      await page.locator(".host-key-upload").setInputFiles({ name: "synthetic.key", mimeType: "text/plain", buffer: Buffer.from(targets.plain.privateKey) });
+      await page.getByText("synthetic.key", { exact: true }).waitFor();
+      await page.locator(".host-key-pass").selectOption("unencrypted");
     }
+    await page.locator(".host-fingerprints").fill("SHA256:synthetic");
+    assert.equal(await page.locator("#seal-enable").count(), 0);
+    await page.locator("#seal-pass").fill(passphrase);
+    await page.locator("#seal-pass2").fill(passphrase);
     await page.getByRole("button", { name: "Save & Start Shellport" }).click();
-    await until("setup config saved", () => fs.existsSync(encrypted ? vault : file));
-    const saved = encrypted ? openVault(fs.readFileSync(vault), passphrase).toString("utf8") : fs.readFileSync(file, "utf8");
-    if (encrypted) assert.equal(fs.existsSync(file), false);
+    await until("setup vault saved", () => fs.existsSync(vault));
+    const saved = openVault(fs.readFileSync(vault), passphrase).toString("utf8");
+    assert.equal(fs.existsSync(file), false);
     assert.ok(!saved.includes(token));
     assert.equal(JSON.parse(saved).users[0].github, "setup-tester");
+    const storedAuth = JSON.parse(saved).hosts[0].auth;
+    if (auth === "password") assert.equal(storedAuth.password, "synthetic-only");
+    else assert.equal(storedAuth.privateKey, targets.plain.privateKey);
     const replay = await fetch(url + "/api/setup/save", { method: "POST", headers: { origin: url, "x-shellport-setup-code": token, "content-type": "application/json" }, body: saved });
     assert.equal(replay.status, 409);
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
