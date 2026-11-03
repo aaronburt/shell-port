@@ -1,14 +1,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "./config.js";
+import { loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createSetupApp } from "./setup.js";
 import { createUnsealApp } from "./unseal.js";
 import { decideBoot } from "./boot.js";
 import { socketPathFor } from "./vaultops.js";
-import { fileIo, fileStore, vaultIo, vaultStore, type HostStore } from "./hostadmin.js";
+import { vaultIo, vaultStore } from "./hostadmin.js";
 import { passkeyStore } from "./passkeys.js";
-import { createMigrateApp } from "./migrate.js";
 import crypto from "node:crypto";
 import { audit } from "./log.js";
 import { AuditLog, fileSink } from "./auditlog.js";
@@ -19,39 +18,37 @@ const vaultPath = process.env.SHELLPORT_VAULT ?? "vault.sealed";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, "public");
 
-function openAuditLog(cfg: LoadedConfig, vault?: string, dek?: Buffer): AuditLog {
-  const file = process.env.SHELLPORT_AUDIT ?? path.join(path.dirname(path.resolve(vault ?? configPath)), "audit.log");
+function openAuditLog(cfg: LoadedConfig, vault: string, dek: Buffer): AuditLog {
+  const file = process.env.SHELLPORT_AUDIT ?? path.join(path.dirname(path.resolve(vault)), "audit.log");
   const onError = (message: string) => audit("server.warning", { message: `the audit log cannot be saved to ${file} (${message}); it is kept in memory only. Set SHELLPORT_AUDIT to a writable file` });
   const retentionDays = cfg.limits.auditRetentionDays;
-  if (vault && !dek) return new AuditLog({ retentionDays, onError });
   try {
-    return new AuditLog({ sink: fileSink(file, vault ? dek : undefined), retentionDays, onError });
+    return new AuditLog({ sink: fileSink(file, dek), retentionDays, onError });
   } catch (e) {
     onError((e as Error).message);
     return new AuditLog({ retentionDays });
   }
 }
 
-function openRecordings(cfg: LoadedConfig, vault?: string, dek?: Buffer): RecordingStore | undefined {
+function openRecordings(cfg: LoadedConfig, vault: string, dek: Buffer): RecordingStore | undefined {
   if (!cfg.recording.enabled) return undefined;
-  const dir = process.env.SHELLPORT_RECORDINGS ?? path.join(path.dirname(path.resolve(vault ?? configPath)), "recordings");
+  const dir = process.env.SHELLPORT_RECORDINGS ?? path.join(path.dirname(path.resolve(vault)), "recordings");
   const onError = (message: string) => audit("server.warning", { message: `session recording: ${message}` });
   const base = { dir, retentionDays: cfg.recording.retentionDays, maxBytes: cfg.recording.maxMB * 1024 * 1024, onError };
   // Recordings are only written when they can be encrypted in sealed mode. Otherwise sessions refuse to open.
-  if (vault && !dek) return new RecordingStore({ ...base, unavailable: "the server has no key to encrypt recordings" });
   try {
-    return new RecordingStore({ ...base, key: vault ? dek : undefined });
+    return new RecordingStore({ ...base, key: dek });
   } catch (e) {
     onError((e as Error).message);
     return new RecordingStore({ ...base, unavailable: (e as Error).message });
   }
 }
 
-function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = false) {
+function startApp(cfg: LoadedConfig, vault: string, dek: Buffer, unsealed = false) {
   const auditLog = openAuditLog(cfg, vault, dek);
   const recordings = openRecordings(cfg, vault, dek);
   if (unsealed) auditLog.add({ kind: "vault_unsealed", user: "", ip: "", detail: "Passphrase accepted on the unseal page" });
-  const hostStore: HostStore | undefined = vault ? (dek ? vaultStore(vault, dek) : undefined) : fileStore(configPath);
+  const hostStore = vaultStore(vault, dek);
   const signals = ["SIGINT", "SIGTERM"] as const;
   const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
   let sealing = false;
@@ -60,15 +57,18 @@ function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = fa
     auditLog,
     hostStore,
     recordings,
-    passkeyStore: vault ? (dek ? passkeyStore("vault", vaultIo(vault, dek)) : undefined) : passkeyStore("file", fileIo(configPath)),
-    onSeal: vault
-      ? () => {
-          if (sealing) return;
-          sealing = true;
-          for (const sig of signals) process.off(sig, onSignal);
-          shutdown(5000, "seal").then(() => { recordings?.stop(); auditLog.stop(); dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
-        }
-      : undefined,
+    passkeyStore: passkeyStore("vault", vaultIo(vault, dek)),
+    onSeal: () => {
+      if (sealing) return;
+      sealing = true;
+      for (const sig of signals) process.off(sig, onSignal);
+      shutdown(5000, "seal").then(() => {
+        recordings?.stop();
+        auditLog.stop();
+        dek.fill(0);
+        startSealed(vault, { port: cfg.server.port, host: cfg.server.host });
+      });
+    },
   });
 
   server.listen(cfg.server.port, cfg.server.host, () => {
@@ -102,7 +102,7 @@ function startSetup() {
 
   server.listen(port, host, () => {
     audit("server.setup", { listen: `${host}:${port}`, configPath });
-    console.log(`No configuration file found at ${configPath}. Starting setup wizard on http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+    console.log(`No vault found at ${vaultPath}. Starting setup wizard on http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
     console.log(`Setup code: ${token}`);
   });
 
@@ -146,41 +146,8 @@ function startSealed(file: string, listen?: { port: number; host: string }) {
   for (const sig of signals) process.on(sig, onSignal);
 }
 
-function startMigrate(cfg: LoadedConfig) {
-  const port = Number(process.env.PORT || cfg.server.port);
-  const host = process.env.HOST || cfg.server.host;
-  const token = crypto.randomBytes(16).toString("hex");
-  const signals = ["SIGINT", "SIGTERM"] as const;
-  const onSignal = (sig: (typeof signals)[number]) => shutdown(5000, sig).then(() => process.exit(0));
-  let handedOver = false;
-  const handOver = (next: () => void) => {
-    if (handedOver) return;
-    handedOver = true;
-    for (const sig of signals) process.off(sig, onSignal);
-    shutdown(1000, "migrate.complete").then(next);
-  };
-  const { server, shutdown } = createMigrateApp({
-    configPath,
-    vaultPath,
-    publicDir,
-    token,
-    trustProxy: process.env.SHELLPORT_TRUST_PROXY ? trustProxyFromEnv(process.env.SHELLPORT_TRUST_PROXY) : cfg.server.trustProxy,
-    onMigrated: (sealed, dek) => handOver(() => startApp(sealed, vaultPath, dek)),
-    onSkip: () => handOver(() => startApp(cfg)),
-  });
-
-  server.listen(port, host, () => {
-    audit("server.migrate", { listen: `${host}:${port}`, config: configPath, vault: vaultPath });
-    console.log(`Found a plain configuration at ${configPath}. Open http://${host === "0.0.0.0" ? "localhost" : host}:${port} to encrypt it into ${vaultPath}, or to continue without.`);
-    console.log(`Migration code: ${token}`);
-    console.log("Set SHELLPORT_MIGRATE=off to skip this and start normally.");
-  });
-
-  for (const sig of signals) process.on(sig, onSignal);
-}
-
 function main() {
-  const boot = decideBoot({ configPath, vaultPath, forceSetup: process.env.SHELLPORT_SETUP === "1" });
+  const boot = decideBoot({ vaultPath, forceSetup: process.env.SHELLPORT_SETUP === "1" });
   if (boot.mode === "error") {
     console.error(boot.message);
     process.exit(1);
@@ -188,16 +155,6 @@ function main() {
     startSetup();
   } else if (boot.mode === "sealed") {
     startSealed(boot.vaultPath);
-  } else {
-    let cfg: LoadedConfig;
-    try {
-      cfg = loadConfig(configPath);
-    } catch (e) {
-      console.error((e as Error).message);
-      process.exit(1);
-    }
-    if (process.env.SHELLPORT_MIGRATE === "off") startApp(cfg);
-    else startMigrate(cfg);
   }
 }
 

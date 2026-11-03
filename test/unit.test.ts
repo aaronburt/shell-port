@@ -220,6 +220,7 @@ test("createSetupApp endpoints operate as expected", async () => {
   const { server, shutdown } = createSetupApp({
     token: "unit-setup-code",
     configPath: cfgPath,
+    vaultPath: path.join(tmpDir, "vault.sealed"),
     publicDir,
     onSaved: () => {
       savedTriggered = true;
@@ -242,7 +243,7 @@ test("createSetupApp endpoints operate as expected", async () => {
     const statusBody = await status.json();
     assert.equal(statusBody.exists, false);
     assert.equal(statusBody.writable, true);
-    assert.equal(statusBody.vaultWritable, false);
+    assert.equal(statusBody.vaultWritable, true);
 
     const totpRes = await fetch(`${baseUrl}/api/setup/totp`, {
       method: "POST",
@@ -274,13 +275,14 @@ test("createSetupApp endpoints operate as expected", async () => {
     const saveRes = await fetch(`${baseUrl}/api/setup/save`, {
       method: "POST",
       headers,
-      body: JSON.stringify(validPayload),
+      body: JSON.stringify({ config: validPayload, passphrase: "synthetic vault passphrase" }),
     });
     assert.equal(saveRes.status, 200);
     const saveBody = await saveRes.json();
     assert.equal(saveBody.ok, true);
     assert.equal(saveBody.saved, true);
-    assert.equal(fs.existsSync(cfgPath), true);
+    assert.equal(fs.existsSync(cfgPath), false);
+    assert.equal(fs.existsSync(path.join(tmpDir, "vault.sealed")), true);
 
     await new Promise((r) => setTimeout(r, 600));
     assert.equal(savedTriggered, true);

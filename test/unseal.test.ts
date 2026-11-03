@@ -247,24 +247,19 @@ test("a sealed config refuses env and file references", () => {
   assert.throws(() => loadSealedConfig("not json"), /valid JSON/);
 });
 
-test("boot: setup, plain, sealed and the error cases", () => {
+test("boot: missing vault opens setup, existing vault unseals and the error cases", () => {
   const sub = fs.mkdtempSync(path.join(dir, "boot-"));
   const configPath = path.join(sub, "config.json");
   const vault = path.join(sub, "vault.sealed");
-  const mode = (forceSetup = false) => decideBoot({ configPath, vaultPath: vault, forceSetup });
+  const mode = (forceSetup = false) => decideBoot({ vaultPath: vault, forceSetup });
 
   assert.equal(mode().mode, "setup");
 
   fs.writeFileSync(configPath, "{}");
-  assert.equal(mode().mode, "plain");
+  assert.equal(mode().mode, "setup");
   assert.equal(mode(true).mode, "setup");
 
   fs.writeFileSync(vault, sealVault(PLAIN, PASS, FAST));
-  const both = mode();
-  assert.equal(both.mode, "error");
-  assert.match((both as { message: string }).message, /Both a vault/);
-
-  fs.rmSync(configPath);
   assert.deepEqual(mode(), { mode: "sealed", vaultPath: vault });
   assert.equal(mode(true).mode, "error");
 

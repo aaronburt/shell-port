@@ -18,7 +18,7 @@
         <p class="subtitle">Generate and initialize your configuration</p>
       </div>
     </div>
-    <div class="status-pill" id="status-pill">Target: <code id="target-path">config.json</code></div>
+    <div class="status-pill" id="status-pill">Target: <code id="target-path">vault.sealed</code></div>
   </div>
 </header>
 
@@ -154,7 +154,7 @@
         <pre><code id="json-preview"></code></pre>
       </div>
       <div class="seal-opt">
-        <label><input type="checkbox" id="seal-enable" checked> Encrypt the configuration with a passphrase (recommended)</label>
+        <p>Encrypt the configuration with a passphrase (required)</p>
         <div id="seal-fields">
           <input type="password" id="seal-pass" autocomplete="new-password" placeholder="Passphrase (12+ characters)" aria-label="Passphrase">
           <input type="password" id="seal-pass2" autocomplete="new-password" placeholder="Repeat passphrase" aria-label="Repeat passphrase">
@@ -165,11 +165,11 @@
         <button type="button" class="btn" id="btn-validate">Validate</button>
         <div class="grid grid-2">
           <button type="button" class="btn" id="btn-copy">Copy JSON</button>
-          <button type="button" class="btn" id="btn-download">Download</button>
+
         </div>
         <button type="button" class="btn primary big" id="btn-save">Save &amp; Start Shellport</button>
       </div>
-      <p class="hint center" id="save-note">If container filesystem is read-only, download the file and mount it at <code id="note-path">/config/config.json</code>.</p>
+      <p class="hint center" id="save-note">Mount a writable vault folder to save your encrypted configuration.</p>
     </div>
   </aside>
   </div>

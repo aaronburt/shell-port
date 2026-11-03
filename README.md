@@ -76,37 +76,15 @@ Shellport follows your system's light or dark setting. Dark is the default, and 
 <img src="docs/screenshots/dark/06-phone-workspace.png" alt="Terminal on a phone-sized screen, dark theme" width="260"><br>
 <sub>The terminal on a phone</sub>
 
-## Quick start with Docker
+## Quick start
 
-You need Docker and a GitHub OAuth app.
+1. Create a GitHub OAuth app with the callback URL `http://localhost:8080/auth/github/callback` for local use, or your HTTPS origin followed by `/auth/github/callback`.
+2. Create a writable `vault` folder. On Linux it must be writable by container user 1000.
+3. Run `docker compose up -d --build` and open `http://localhost:8080`.
+4. Find the one-time setup code in `docker compose logs shellport`. Enter it in the wizard, configure OAuth, users and SSH hosts, and choose a vault passphrase. Upload an SSH key or choose **Enter password into vault** for host credentials.
+5. Setup writes only the encrypted vault. After each restart, enter the passphrase to unseal it before signing in.
 
-1. **Create a GitHub OAuth app.** In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**. Set the authorization callback URL to `http://localhost:8080/auth/github/callback`.
-
-2. **Create your local files.**
-
-   ```sh
-   cp config.local.example.json config.json
-   cp .env.example .env
-   mkdir -p keys
-   ```
-
-3. **Create an authenticator secret for your GitHub login.**
-
-   ```sh
-   docker compose run --rm --no-deps --entrypoint node shellport dist/totp-cli.js <github-login>
-   ```
-
-   The command prints a QR code and a secret. Scan the code with your authenticator app. Then put the secret in `.env` as `SHELLPORT_TOTP_USER`, the variable that `config.local.example.json` reads.
-
-4. **Edit `.env` and `config.json`.** In `.env`, set `SHELLPORT_GITHUB_SECRET` to your OAuth client secret. If you keep the example host, also set `SHELLPORT_HOST_PASSWORD`. In `config.json`, set `github.clientId` to your OAuth client ID, and replace the example user with your numeric GitHub ID or login. Then set up your hosts (see [Configuration](#configuration)).
-
-5. **Start Shellport.**
-
-   ```sh
-   docker compose up -d --build
-   ```
-
-   Open `http://localhost:8080` and sign in.
+Use HTTPS for remote access. Keep the vault passphrase in a password manager; it cannot be recovered.
 
 ## Try it with demo hosts
 
@@ -123,14 +101,14 @@ The setup generates the keys, starts the demo servers and pins their host keys i
 
 The `deploy/` folder runs Shellport behind Caddy, which handles HTTPS certificates.
 
-1. Set `server.publicUrl` in `config.json` to your HTTPS address, for example `https://ssh.example.com`.
+1. Set `server.publicUrl` in the setup wizard or vault to your HTTPS address, for example `https://ssh.example.com`.
 2. Set the same callback URL on your OAuth app: `https://ssh.example.com/auth/github/callback`.
-3. Copy `config.json`, `.env` and `keys/` into `deploy/`, and set your domain in `deploy/Caddyfile`.
+3. Create a writable `deploy/vault` folder and set your domain in `deploy/Caddyfile`. Configure the server through the setup wizard, using your HTTPS origin.
 4. From `deploy/`, run `docker compose up -d`.
 
 ## Configuration
 
-Shellport reads `config.json`. Start from [`config.example.json`](config.example.json). A secret can be a plain string, `{ "env": "VAR_NAME" }` or `{ "file": "path/to/file" }`. Prefer the `env` or `file` forms so secrets stay out of `config.json`.
+Shellport requires `vault.sealed`. A legacy `config.json` can only be imported using `npm run vault -- seal`. Start from [`config.example.json`](config.example.json). A secret can be a plain string, `{ "env": "VAR_NAME" }` or `{ "file": "path/to/file" }`. Environment and file references are resolved once during setup or CLI import and stored inside the vault. The running vault does not depend on external secret references.
 
 | Section | What it controls |
 | --- | --- |
@@ -150,26 +128,25 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 - **SSH key:** the private key stays on the server. If the key is passphrase-protected, the user types the passphrase in the terminal tab when connecting.
 - **Password:** stored on the server as an `env` or `file` secret. It is never sent to the browser.
 
-**Adding hosts from the browser.** A user with `"admin": true` sees an **Add host** button under the host list. The dialog takes a name, optional group, host or IP, port and user, and either an existing key or an uploaded private key. Shellport connects once to read the host's SSH key and pins it, so check that the address is the machine you mean. A key without a passphrase is only saved after the admin confirms a warning; passphrase-protected keys ask for the passphrase in the terminal each time. Every signed-in user sees the new host. Admins also see a pencil on each host: **Edit** changes any field (leave the key as it is, pick another, or upload one) and **Delete host** removes it after a confirmation. Deleting closes open terminals to that host, the last host cannot be deleted, and the host key is pinned again only when the address or port changes. A key file is removed only if Shellport created it and no other host uses it. Nobody is an admin unless you set the flag. The setup wizard marks the first user, and migrating a plain `config.json` into a vault (or `npm run vault -- seal`) promotes the first user when nobody in the file is an admin yet; change it with `npm run vault -- edit`. A server unsealing a vault in which nobody is an admin treats the first user as one (and logs a notice), so vaults made before this feature need no edit; add an `admin` flag to a user, with `npm run vault -- edit`, to choose someone else. In plain mode the server only logs the notice. Where the host is saved depends on how the server runs:
+**Adding hosts from the browser.** A user with `"admin": true` sees an **Add host** button under the host list. The dialog takes a name, optional group, host or IP, port and user, and either an existing key or an uploaded private key. Shellport connects once to read the host's SSH key and pins it, so check that the address is the machine you mean. A key without a passphrase is only saved after the admin confirms a warning; passphrase-protected keys ask for the passphrase in the terminal each time. Every signed-in user sees the new host. Admins also see a pencil on each host: **Edit** changes any field (leave the key as it is, pick another, or upload one) and **Delete host** removes it after a confirmation. Deleting closes open terminals to that host, the last host cannot be deleted, and the host key is pinned again only when the address or port changes. A key file is removed only if Shellport created it and no other host uses it. Nobody is an admin unless you set the flag. The setup wizard marks the first user, and converting a plain `config.json` with `npm run vault -- seal` promotes the first user when nobody in the file is an admin yet; change it with `npm run vault -- edit`. A server unsealing a vault in which nobody is an admin treats the first user as one (and logs a notice), so vaults made before this feature need no edit; add an `admin` flag to a user, with `npm run vault -- edit`, to choose someone else.  Hosts and uploaded keys are saved in the encrypted vault:
 
 - **Sealed:** the host and an uploaded key go into the vault, which is re-encrypted in place. This needs the vault folder to be writable and the server to have been unsealed since the vault was last changed by `npm run vault -- edit` or `import`; otherwise adding fails and you should seal and unseal once.
-- **Plain `config.json`:** the host is appended to `config.json` and an uploaded key is written to `keys/sp-<random>.key` (mode 0600) next to it. The default Docker compose files mount both read-only, so adding fails there until you make them writable. Sealed mode avoids this.
 
-**Setup wizard.** If Shellport starts without a `config.json`, it opens a setup wizard instead of the app and prints a one-time **setup code** in its server log (`docker compose logs shellport`). Enter that code to configure the server, GitHub OAuth, session limits and SSH hosts. The wizard can also generate TOTP secrets with QR codes, check the config against the schema, and download `config.json`. Setup requires HTTPS or an address on localhost. All setup APIs require the code; it stops working after a successful save, and restarting setup generates a new one. Native setup listens on loopback by default; set `HOST` to expose it elsewhere. The Docker image listens on all container interfaces and the local compose file publishes it on loopback. You can force the wizard with `SHELLPORT_SETUP=1`. Behind an HTTPS reverse proxy, set `SHELLPORT_TRUST_PROXY` to the number of proxy hops; the supplied Caddy deployment sets it to `1`.
+**Setup wizard.** If Shellport starts without a vault or legacy `config.json`, it opens a setup wizard instead of the app and prints a one-time **setup code** in its server log (`docker compose logs shellport`). Enter that code to configure the server, GitHub OAuth, session limits and SSH hosts. The wizard can also generate TOTP secrets with QR codes, check the config against the schema, and preview the configuration. Setup requires HTTPS or an address on localhost. All setup APIs require the code; it stops working after a successful save, and restarting setup generates a new one. Native setup listens on loopback by default; set `HOST` to expose it elsewhere. The Docker image listens on all container interfaces and the local compose file publishes it on loopback. You can force the wizard with `SHELLPORT_SETUP=1`. Behind an HTTPS reverse proxy, set `SHELLPORT_TRUST_PROXY` to the number of proxy hops; the supplied Caddy deployment sets it to `1`.
 
-## Sealed mode
+## Required encrypted vault
 
 Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of `config.json` and `.env`, Shellport has one file, `vault.sealed`, and it starts "sealed": the only page it serves is an unseal screen. Someone who knows the passphrase unlocks it in the browser, after which the usual GitHub sign-in and TOTP code apply. Nothing is ever written to disk in plain text.
 
-**Migrating an existing install.** If Shellport starts and finds a plain `config.json` with no vault, it does not start the app. It opens a migration page instead and prints a one-time **migration code** in its log (`docker compose logs shellport`). Enter the code and a new passphrase, and Shellport encrypts the config (inlining `.env` values and key files), writes `vault.sealed`, and starts the app already unsealed. Or choose **Continue without encrypting** to start as before; you will be asked again on the next start unless you set `SHELLPORT_MIGRATE=off`. The page accepts the passphrase over HTTPS or on localhost only. The Docker compose files mount a `./vault` folder for this (create it first with `mkdir vault`; on Linux it must be writable by user 1000). Afterwards remove `config.json`, `.env` and `keys/` and their lines from the compose file, because Shellport refuses to start while a vault and a `config.json` both exist.
+**Startup.** When `vault.sealed` is missing, Shellport opens the setup wizard. When it exists, Shellport opens the unseal page. Legacy `config.json` files are ignored by startup. You can configure a fresh vault in setup or explicitly convert an old config using `npm run vault -- seal`. Remove old plaintext config, environment and key files after verifying your vault; they are not automatically deleted.
 
-**Create a vault.** On a fresh install the setup wizard encrypts by default: the last step asks for a passphrase and writes `vault.sealed`, and no plain `config.json` is ever written (untick the box to write a plain config instead). The box is disabled when the vault folder cannot be written. Or convert an existing setup:
+**Create a vault.** On a fresh install the setup wizard encrypts by default: the last step asks for a passphrase and writes `vault.sealed`, and no plain `config.json` is ever written (encryption is required). Saving is disabled when the vault folder cannot be written. Or convert an existing setup:
 
 ```sh
 npm run vault -- seal      # reads config.json, inlines .env and key-file values, writes vault.sealed
 ```
 
-Then delete `config.json`, `.env` and the key files. Shellport refuses to start while a vault and a `config.json` both exist. In Docker, run the command with `docker compose run --rm --no-deps --entrypoint node shellport dist/vault-cli.js seal`.
+Then delete `config.json`, `.env` and the key files. Startup uses only the vault. In Docker, run the command with `docker compose run --rm --no-deps --entrypoint node shellport dist/vault-cli.js seal`.
 
 **Day to day.**
 
@@ -222,13 +199,10 @@ You need Node.js 24 or newer. Node.js 26 LTS is recommended and is used by the D
 ```sh
 npm ci
 npm run build
-cp config.local.example.json config.json
-cp .env.example .env
-npm run totp -- <github-login>   # put the secret in .env as SHELLPORT_TOTP_USER
-node --env-file=.env dist/server.js
+node dist/server.js
 ```
 
-Shellport refuses to start until `.env` has `SHELLPORT_GITHUB_SECRET` and `SHELLPORT_TOTP_USER`, and `SHELLPORT_HOST_PASSWORD` if the example host is still in `config.json`. Then open `http://localhost:8080`. Shellport reads `config.json` from the current folder, or from the path in `SHELLPORT_CONFIG`.
+Open `http://localhost:8080`, enter the setup code from the log, and configure your encrypted vault. The default vault path is `vault.sealed`; set `SHELLPORT_VAULT` to change it. A missing vault opens setup, including when a legacy config exists.
 
 ## Testing
 
@@ -251,7 +225,7 @@ Admins get an **Audit log** tab (Account → Audit log). It records sign-ins and
 
 The tab filters by user, host, event type and period, and **Export CSV** downloads everything the filters match.
 
-Events are appended to a JSONL file, `audit.log`, next to the vault (or the config file). Set `SHELLPORT_AUDIT` to use another path. While the server is sealed, every line is encrypted with a key derived from the vault key. Entries older than `limits.auditRetentionDays` (default 90) are removed. If the file cannot be written, for example when `/config` is mounted read-only, events stay in memory only and the tab warns you.
+Events are appended to a JSONL file, `audit.log`, next to the vault. Set `SHELLPORT_AUDIT` to use another path. While the server is sealed, every line is encrypted with a key derived from the vault key. Entries older than `limits.auditRetentionDays` (default 90) are removed. If the file cannot be written, for example when `/config` is mounted read-only, events stay in memory only and the tab warns you.
 
 ## Session recordings
 
@@ -260,12 +234,12 @@ Each SSH session that a user opens in the browser is recorded to a file. The rec
 - **Who sees them.** Only admins. Account → Audit log has a **Recordings** view that lists every recording with its host, user, length and size. **Play** opens a playback tab with pause, seek and 1×–8× speed. **Download .cast** saves the file in asciicast v2 format, which the [asciinema](https://asciinema.org) player can also play. **Delete** removes a finished recording. Every view, download and delete is written to the audit log.
 - **Connect events link to their recording.** A connect row in the Events view has a **Play recording** link.
 - **Visible to the user.** A session that is being recorded shows a red dot on its tab in place of the green connected dot. Recording is on by default, so tell your users.
-- **Where it is stored.** One `.cast` file per session, in `recordings/<host id>/`, next to the vault (or next to `config.json` when the vault is not used). Set `SHELLPORT_RECORDINGS` to use another folder. Each recording also has a small `.json` file with its details.
+- **Where it is stored.** One `.cast` file per session, in `recordings/<host id>/`, next to the vault. Set `SHELLPORT_RECORDINGS` to use another folder. Each recording also has a small `.json` file with its details.
 - **Encrypted while sealed.** When the server is sealed, every line of every recording is encrypted with a key derived from the vault key. Recordings cannot be played while the server is sealed, and nothing is recorded until it is unsealed.
 - **Retention and size.** Recordings older than `recording.retentionDays` (default 90) are deleted. A session that reaches `recording.maxMB` (default 100) is closed, and its recording is marked as stopped early.
 - **Fails closed.** If a recording cannot start, the session does not open. If output cannot be written to the file, the session is closed before that output reaches the browser, so the recording never has gaps.
 - **Server restarts.** A session still running when the server stops is marked **Interrupted**, and its recording ends where the server stopped.
-- **Turning it off.** Set `"recording": { "enabled": false }` in `config.json`. New sessions then open without a recording, and existing recordings stay until they expire.
+- **Turning it off.** Set `"recording": { "enabled": false }` in the vault using `npm run vault -- edit`. New sessions then open without a recording, and existing recordings stay until they expire.
 
 ## Security
 
@@ -279,4 +253,4 @@ Shellport gives a signed-in user a shell on the hosts they are allowed to reach,
 
 Once signed in, open Account and choose "Add a passkey". The next time, "Sign in with a passkey" on the sign-in page logs you in with your device's fingerprint, face or PIN, without GitHub or an authenticator code. GitHub and TOTP keep working as the other way in. Only existing users on the allowlist can add one, and only for their own account.
 
-Passkeys belong to the host name in `server.publicUrl` and need HTTPS (or `localhost`). They are saved in `config.json`, or in the vault when sealed, so the folder must be writable: with the default compose file's read-only config mount, adding a passkey is refused. Up to 10 passkeys per user.
+Passkeys belong to the host name in `server.publicUrl` and need HTTPS (or `localhost`). They are saved in the encrypted vault, so its folder must be writable. Up to 10 passkeys per user.

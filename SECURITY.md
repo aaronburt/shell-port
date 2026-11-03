@@ -38,7 +38,7 @@ Design notes (choices that look odd but are deliberate):
 
 What it does not defend against:
 
-- Anyone who can read the server's files or environment, since TOTP secrets and host credentials are stored there in plaintext. Sealed mode removes this for files at rest; see below.
+- Anyone who can read the server's files or environment, while the server is unsealed, since decrypted secrets live in process memory. Files at rest are encrypted in the required vault; see below.
 - A user who has passed both factors: there is no per-command control. Sessions are recorded for admins (terminal output only, see the README's Session recordings), but not blocked or filtered. The file explorer can read and delete anything the configured SSH account can, exactly like the terminal can; Shellport adds no path jail beyond that account's permissions.
 - Running over plain HTTP on an untrusted network. Use HTTPS, and preferably put the service behind a VPN or an identity-aware proxy.
 - Multiple instances: sessions are in memory and per-IP rate limits are not shared.
@@ -51,13 +51,12 @@ Session recordings are admin-only and hold terminal output, not keystrokes. Each
 
 First-run setup requires a random 256-bit code printed in the server log. All setup APIs require this code over HTTPS or localhost, writes require the same Origin, and a successful save consumes the code. The code is kept in browser memory only. Protect access to server logs, and set `SHELLPORT_TRUST_PROXY` appropriately when setup runs behind an HTTPS proxy.
 
-An optional vault (`vault.sealed`) replaces `config.json` and `.env`. See the README for how to use it.
+A required encrypted vault (`vault.sealed`) stores the configuration and secrets. When the vault is missing, startup serves setup. Legacy `config.json` files are ignored by startup and can only be imported explicitly with the CLI. Remove leftover plaintext secrets after verifying the vault. See the README for how to use it.
 
 - **Format.** The passphrase goes through scrypt (N=2^17, r=8, p=1) to a key that wraps a random 256-bit data key with AES-256-GCM, and the data key encrypts the config with AES-256-GCM. The header (version and KDF settings) is authenticated, so changed settings are detected. Changing the passphrase re-wraps the data key without re-encrypting the contents. The KDF name is stored in the header so Argon2id can be added later.
 - **Protects against:** a disk image, backup, container layer or leaked volume that does not include the running process. Without the passphrase, host passwords, SSH keys, OAuth secret and TOTP secrets are unreadable and tampering is detected.
 - **Does not protect against:** anyone who can read the running process's memory, or who can unseal it, since the decrypted config lives in memory while the server is unsealed. A weak passphrase can be guessed offline against a stolen vault; use a long one. There is no recovery path if the passphrase is lost, by design.
 - **Sealed server surface.** While sealed it serves only the unseal page, its static assets, `/healthz` and `POST /api/unseal`. Unsealing needs a same-origin request over HTTPS (or from loopback), accepts a body of at most 2 KB, and has a global lockout after repeated failures. Successful and failed attempts are audit-logged.
-- **Migration page.** When a plain `config.json` exists and no vault does, the server serves only a migration page until someone enters the one-time code from its log (compared in constant time, with a lockout on repeated wrong codes). Without log access the page cannot be used to set a passphrase. It accepts the passphrase over HTTPS or when the request is addressed to localhost.
 - **Local unseal socket.** A sealed server also listens on `<vault>.sock` with mode 0600. Anyone who can open it can try passphrases without the web lockout, so protect the directory like the vault itself.
 - **The passphrase** is used once to derive a key, then dropped; derived keys and decrypted buffers are zeroed after use where Node allows. The one exception is the vault's data key, which an unsealed server keeps in memory so admins can add hosts and keys without being asked for the passphrase again. It is zeroed when the server is sealed. It is sent to the server in the unseal request, so the server operator and the TLS endpoint are trusted with it.
 - **Plain-text leftovers.** `export` and the editor's temporary file contain secrets in plain text. The temporary file is mode 0600, placed in `/dev/shm` when available, and overwritten and removed afterwards.

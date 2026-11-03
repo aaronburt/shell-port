@@ -19,6 +19,8 @@ interface SetupHost {
   username: string;
   authType: "key" | "password";
   keyPath: string;
+  keyPem?: string;
+  keyFilename?: string;
   keyPassphraseType: "prompt" | "unencrypted" | "env";
   keyPassphraseEnv: string;
   passwordType: "env" | "literal";
@@ -296,9 +298,12 @@ function renderHosts(): void {
       </div>
       ${host.authType === "key" ? `
         <div class="form-group">
-          <label>Private Key Path</label>
+          <label>Private Key Path (legacy import)</label>
           <input type="text" class="host-key-path" data-id="${host.id}" value="${escapeHtml(host.keyPath)}" placeholder="keys/shellport_ed25519">
           <span class="hint">Relative to config.json or absolute path on container.</span>
+          <label>Upload private key into the vault</label>
+          <input type="file" class="host-key-upload" data-id="${host.id}">
+          <span class="hint">${host.keyFilename ? escapeHtml(host.keyFilename) : "Choose a key file instead of a server path."}</span>
         </div>
         <div class="form-group">
           <label>Key Passphrase Mode</label>
@@ -316,8 +321,12 @@ function renderHosts(): void {
         ` : ""}
       ` : `
         <div class="form-group">
-          <label>Password Environment Variable</label>
-          <input type="text" class="host-password-val" data-id="${host.id}" value="${escapeHtml(host.passwordValue)}" placeholder="SHELLPORT_PI_PASSWORD">
+          <label>Password source</label>
+          <select class="host-password-type" data-id="${host.id}">
+            <option value="env" ${host.passwordType === "env" ? "selected" : ""}>Import environment variable</option>
+            <option value="literal" ${host.passwordType === "literal" ? "selected" : ""}>Enter password into vault</option>
+          </select>
+          <input type="${host.passwordType === "literal" ? "password" : "text"}" class="host-password-val" data-id="${host.id}" value="${escapeHtml(host.passwordValue)}" placeholder="${host.passwordType === "literal" ? "SSH password" : "SHELLPORT_PI_PASSWORD"}">
         </div>
       `}
       <div class="form-group">
@@ -339,6 +348,27 @@ function renderHosts(): void {
 }
 
 function attachHostEvents(): void {
+  document.querySelectorAll<HTMLInputElement>(".host-key-upload").forEach(el => {
+    el.addEventListener("change", async () => {
+      const host = hostsState.find(h => h.id === el.dataset.id);
+      const file = el.files?.[0];
+      if (!host || !file) return;
+      if (file.size > 16 * 1024) { alert("Choose a private key of at most 16 KB."); return; }
+      host.keyPem = await file.text();
+      host.keyFilename = file.name;
+      renderHosts();
+    });
+  });
+  document.querySelectorAll<HTMLSelectElement>(".host-password-type").forEach(el => {
+    el.addEventListener("change", () => {
+      const host = hostsState.find(h => h.id === el.dataset.id);
+      if (!host) return;
+      host.passwordType = el.value as "env" | "literal";
+      host.passwordValue = "";
+      renderHosts();
+    });
+  });
+
   const syncHostField = (selector: string, key: keyof SetupHost, isNumber = false) => {
     document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(selector).forEach((el) => {
       el.addEventListener("input", (e) => {
@@ -433,12 +463,12 @@ function buildConfigObject(): any {
     if (h.authType === "password") {
       item.auth = {
         type: "password",
-        password: { env: h.passwordValue.trim() || "SHELLPORT_PASSWORD" },
+        password: h.passwordType === "literal" ? h.passwordValue : { env: h.passwordValue.trim() || "SHELLPORT_PASSWORD" },
       };
     } else {
       const authKey: any = {
         type: "key",
-        privateKey: { file: h.keyPath.trim() || "keys/shellport_ed25519" },
+        privateKey: h.keyPem ?? { file: h.keyPath.trim() || "keys/shellport_ed25519" },
       };
       if (h.keyPassphraseType === "unencrypted") {
         authKey.passphrase = false;
@@ -548,19 +578,6 @@ async function copyConfigJson(): Promise<void> {
   }
 }
 
-function downloadConfigJson(): void {
-  const cfg = buildConfigObject();
-  const blob = new Blob([JSON.stringify(cfg, null, 2) + "\n"], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "config.json";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 async function saveConfig(): Promise<void> {
   const valid = await validateConfig();
   if (!valid) return;
@@ -575,10 +592,9 @@ async function saveConfig(): Promise<void> {
   }
 
   const cfg = buildConfigObject();
-  const sealOn = (document.getElementById("seal-enable") as HTMLInputElement | null)?.checked;
   const pass = (document.getElementById("seal-pass") as HTMLInputElement | null)?.value ?? "";
   const pass2 = (document.getElementById("seal-pass2") as HTMLInputElement | null)?.value ?? "";
-  if (sealOn && pass !== pass2) {
+  if (pass !== pass2) {
     if (errorBox) {
       errorBox.textContent = "The two passphrases do not match.";
       errorBox.hidden = false;
@@ -593,7 +609,7 @@ async function saveConfig(): Promise<void> {
     const res = await setupFetch("/api/setup/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sealOn ? { config: cfg, passphrase: pass } : cfg),
+      body: JSON.stringify({ config: cfg, passphrase: pass }),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -648,24 +664,19 @@ async function initSetup(): Promise<void> {
     const res = await unlockSetup();
     if (res.ok) {
       const data = await res.json();
-      targetConfigPath = data.configPath || "config.json";
-      isWritable = Boolean(data.writable);
+      targetConfigPath = data.vaultPath || "vault.sealed";
 
       const targetPathEl = document.getElementById("target-path");
       if (targetPathEl) targetPathEl.textContent = targetConfigPath;
 
-      const sealBox = document.getElementById("seal-enable") as HTMLInputElement | null;
-      const sealFields = document.getElementById("seal-fields");
       const sealPath = document.getElementById("seal-path");
       if (sealPath && data.vaultPath) sealPath.textContent = data.vaultPath;
-      if (sealBox && !data.vaultWritable) {
-        sealBox.checked = false;
-        sealBox.disabled = true;
-        if (sealFields) sealFields.hidden = true;
+      isWritable = Boolean(data.vaultWritable);
+      if (!isWritable) {
         const hint = document.createElement("p");
         hint.className = "hint";
-        hint.textContent = `Encryption is unavailable because ${data.vaultPath || "the vault path"} cannot be written. Mount a writable folder there (see the README) to enable it.`;
-        sealBox.closest(".seal-opt")?.appendChild(hint);
+        hint.textContent = `The vault cannot be written at ${data.vaultPath || "the vault path"}. Mount a writable vault folder to finish setup.`;
+        document.querySelector(".seal-opt")?.appendChild(hint);
       }
 
       const notePath = document.getElementById("note-path");
@@ -673,7 +684,8 @@ async function initSetup(): Promise<void> {
 
       const saveBtn = document.getElementById("btn-save") as HTMLButtonElement | null;
       if (saveBtn && !isWritable) {
-        saveBtn.title = "Target path is read-only. Download config.json instead.";
+        saveBtn.disabled = true;
+        saveBtn.title = "A writable vault folder is required.";
       }
     }
   } catch {
@@ -729,12 +741,7 @@ async function initSetup(): Promise<void> {
 
   document.getElementById("btn-validate")?.addEventListener("click", validateConfig);
   document.getElementById("btn-copy")?.addEventListener("click", copyConfigJson);
-  document.getElementById("btn-download")?.addEventListener("click", downloadConfigJson);
   document.getElementById("btn-save")?.addEventListener("click", saveConfig);
-  document.getElementById("seal-enable")?.addEventListener("change", (e) => {
-    const fields = document.getElementById("seal-fields");
-    if (fields) fields.hidden = !(e.target as HTMLInputElement).checked;
-  });
 
   renderUsers();
   renderHosts();
