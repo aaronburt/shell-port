@@ -242,8 +242,27 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  smoke:
-    runs-on: ubuntu-latest
+  smoke_sections:
+    name: smoke (${{ matrix.section }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - section: auth
+            browser: false
+          - section: ssh
+            browser: false
+          - section: ui-terminal
+            browser: true
+          - section: ui-account
+            browser: true
+          - section: setup
+            browser: true
+          - section: pages
+            browser: true
+    env:
+      SMOKE_BROWSER: bundled
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -251,9 +270,37 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
-      - run: npx playwright-core install --with-deps chromium
-      - run: npm run smoke:full
-      - run: npm run smoke:pages
+      - name: Read Playwright version
+        if: matrix.browser
+        id: playwright
+        run: node -e "console.log('version=' + require('playwright-core/package.json').version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Chromium headless shell
+        if: matrix.browser
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-headless-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-${{ steps.playwright.outputs.version }}
+      # The browser install is idempotent on cache hits. OS libraries and fonts
+      # must still be installed on every fresh runner.
+      - name: Install Chromium headless shell and system dependencies
+        if: matrix.browser
+        run: npx playwright-core install --with-deps --only-shell chromium
+      - name: Run smoke section
+        env:
+          SMOKE_SECTION: ${{ matrix.section }}
+        run: node scripts/smoke-tests.mjs "$SMOKE_SECTION"
+
+  # Preserve the existing required check and release dependency. A failed or
+  # cancelled section must never make the aggregate check green.
+  smoke:
+    needs: [smoke_sections]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every smoke section to pass
+        env:
+          SMOKE_RESULT: ${{ needs.smoke_sections.result }}
+        run: test "$SMOKE_RESULT" = success
 
   release:
     needs: [version, check, docker, smoke]
