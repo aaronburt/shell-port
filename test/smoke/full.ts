@@ -1055,6 +1055,11 @@ test("UI: the avatar opens the account as a tab with the display switch, the sho
   const page = ui.locator("#page-account");
   assert.equal(await ui.locator("#acct-title").innerText(), "ui-user");
   assert.match(await page.innerText(), /Signed in with GitHub/);
+  const accountWidth = await page.evaluate((el) => ({
+    available: el.clientWidth,
+    content: el.querySelector(".acct-body")!.getBoundingClientRect().width,
+  }));
+  assert.ok(Math.abs(accountWidth.content - accountWidth.available) < 2, `account content fills the available width: ${JSON.stringify(accountWidth)}`);
   assert.equal(await ui.locator("#tabs .tab.ptab").count(), 1, "the account has a page tab");
   assert.match(await ui.locator("#tabs .tab.ptab").innerText(), /Account/);
   const text = flatten(await page.innerText());

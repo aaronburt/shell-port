@@ -168,8 +168,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 
 .page { position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0; background: var(--panel); color: var(--fg); font-size: 13px; overflow: auto; overscroll-behavior: contain; }
 .page[hidden] { display: none; }
-.acct-page-body { width: min(720px, 100%); margin: 0 auto; }
-.acct-body { display: flex; flex-direction: column; flex: none; width: min(720px, 100%); margin: 0 auto; }
+.acct-page-body { width: 100%; margin: 0 auto; }
+.acct-body { display: flex; flex-direction: column; flex: none; width: 100%; margin: 0 auto; }
 .acct-head { display: flex; align-items: center; gap: 14px; padding: 20px 22px 18px; border-bottom: 1px solid var(--line); }
 .acct-avatar { width: 48px; height: 48px; font-size: 16px; }
 .acct-head h3 { margin: 0; font-family: var(--f-display); font-size: 20px; letter-spacing: -.01em; overflow-wrap: anywhere; }
