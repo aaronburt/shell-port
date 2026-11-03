@@ -129,16 +129,14 @@ test("malformed unauthenticated upgrade targets return 400 and the server stays 
 });
 
 
-test("legacy plaintext config cannot bypass migration with SHELLPORT_MIGRATE=off", async () => {
+test("a missing vault opens setup even with a legacy config and migration setting", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sp-mandatory-vault-"));
   const listener = net.createServer();
   await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
   const port = (listener.address() as AddressInfo).port;
   await new Promise<void>(resolve => listener.close(() => resolve()));
-  const cfg = config();
-  cfg.server.port = port;
   const configPath = path.join(dir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify(cfg));
+  fs.writeFileSync(configPath, JSON.stringify(config()));
   const child = spawn(process.execPath, [path.resolve("dist/server.js")], {
     env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), SHELLPORT_CONFIG: configPath,
       SHELLPORT_VAULT: path.join(dir, "vault.sealed"), SHELLPORT_MIGRATE: "off", SHELLPORT_SETUP: "0" },
@@ -151,7 +149,8 @@ test("legacy plaintext config cannot bypass migration with SHELLPORT_MIGRATE=off
       try { health = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json(); break; } catch {}
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert.equal(health?.migrate, true);
+    assert.equal(health?.setup, true);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/migrate/status`)).status, 404);
     assert.equal((await fetch(`http://127.0.0.1:${port}/auth/github`)).status, 404);
     assert.equal(fs.existsSync(path.join(dir, "vault.sealed")), false);
   } finally {

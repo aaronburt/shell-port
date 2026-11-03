@@ -4,13 +4,11 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { inlineSecrets, migrateToVault, plainConfigToSealedJson, socketPathFor, writeFileAtomic } from "../src/server/vaultops.js";
+import { inlineSecrets, plainConfigToSealedJson, socketPathFor, writeFileAtomic } from "../src/server/vaultops.js";
 import { loadSealedConfig } from "../src/server/config.js";
 import { createUnsealApp, UnsealLockout } from "../src/server/unseal.js";
 import { base32Encode } from "../src/server/totp.js";
 import { openVault, sealVault } from "../src/server/vault.js";
-import { createMigrateApp } from "../src/server/migrate.js";
-import type { LoadedConfig } from "../src/server/config.js";
 import { createSetupApp } from "../src/server/setup.js";
 import type { AddressInfo } from "node:net";
 
@@ -46,7 +44,7 @@ test("a plain config converts into a sealed config that loads", () => {
   assert.equal(loadSealedConfig(json).hosts[0].id, "h");
 });
 
-test("migration promotes the first user to admin only when nobody is one yet", () => {
+test("CLI conversion promotes the first user to admin only when nobody is one yet", () => {
   const secret = base32Encode(Buffer.alloc(20, 3));
   const make = (name: string, users: unknown[]) => {
     const f = path.join(dir, name);
@@ -149,152 +147,6 @@ test("the setup wizard can seal the configuration instead of writing config.json
 
     const again = await send({ config, passphrase: PASS });
     assert.equal(again.status, 409);
-  } finally {
-    await shutdown(500, "test");
-  }
-});
-
-test("migrating a plain install writes a vault the sealed loader accepts", () => {
-  const sub = fs.mkdtempSync(path.join(dir, "migrate-"));
-  fs.writeFileSync(path.join(sub, "pw.txt"), "file-password\n");
-  process.env.OPS_MIG_TOTP = base32Encode(Buffer.alloc(20, 9));
-  const configPath = path.join(sub, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
-    server: { publicUrl: "https://ssh.example.com" },
-    github: { clientId: "id", clientSecret: "secret" },
-    users: [{ github: 1, totpSecret: { env: "OPS_MIG_TOTP" } }],
-    hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: { file: "pw.txt" } }, hostKeyFingerprints: ["SHA256:a"] }],
-  }));
-  const vaultPath = path.join(sub, "out", "vault.sealed");
-
-  assert.throws(() => migrateToVault({ configPath, vaultPath, passphrase: PASS }), /does not exist/);
-  fs.mkdirSync(path.dirname(vaultPath));
-  assert.throws(() => migrateToVault({ configPath, vaultPath, passphrase: "short" }), /at least/);
-  assert.equal(fs.existsSync(vaultPath), false);
-
-  const cfg = migrateToVault({ configPath, vaultPath, passphrase: PASS });
-  assert.equal(cfg.hosts[0].id, "h");
-  const stored = JSON.parse(openVault(fs.readFileSync(vaultPath), PASS).toString("utf8"));
-  assert.equal(stored.hosts[0].auth.password, "file-password");
-  assert.equal(stored.users[0].totpSecret, process.env.OPS_MIG_TOTP);
-  assert.ok(fs.existsSync(configPath));
-  assert.throws(() => migrateToVault({ configPath, vaultPath, passphrase: PASS }), /already exists/);
-});
-
-test("migration mode: needs the code, encrypts the config, and refuses a plaintext bypass", async () => {
-  const sub = fs.mkdtempSync(path.join(dir, "mig-app-"));
-  process.env.OPS_MIG2_TOTP = base32Encode(Buffer.alloc(20, 4));
-  const configPath = path.join(sub, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
-    server: { publicUrl: "https://ssh.example.com" },
-    github: { clientId: "id", clientSecret: "secret" },
-    users: [{ github: 1, totpSecret: { env: "OPS_MIG2_TOTP" } }],
-    hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: "pw" }, hostKeyFingerprints: ["SHA256:a"] }],
-  }));
-  const vaultPath = path.join(sub, "vault.sealed");
-  const pub = path.join(sub, "public");
-  fs.mkdirSync(pub);
-  fs.writeFileSync(path.join(pub, "migrate.html"), "<title>Migrate</title>");
-  const events: string[] = [];
-  let migrated: LoadedConfig | undefined;
-  const { server, shutdown } = createMigrateApp({
-    configPath,
-    vaultPath,
-    publicDir: pub,
-    token: "tok-123",
-    lockout: new UnsealLockout(3, [60_000]),
-    onMigrated: (c) => { migrated = c; events.push("migrated"); },
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const post = (p: string, body: unknown, headers: Record<string, string> = { Origin: base }) =>
-    fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
-  try {
-    assert.deepEqual(await (await fetch(base + "/healthz")).json(), { ok: true, migrate: true });
-    assert.equal((await fetch(base + "/")).status, 200);
-    assert.equal((await fetch(base + "/api/hosts")).status, 404);
-
-    assert.equal((await post("/api/migrate", { token: "tok-123", passphrase: PASS }, {})).status, 403);
-    assert.equal((await post("/api/migrate", { token: "wrong", passphrase: PASS })).status, 401);
-    assert.equal(fs.existsSync(vaultPath), false);
-
-    const weak = await post("/api/migrate", { token: "tok-123", passphrase: "short" });
-    assert.equal(weak.status, 400);
-    assert.equal((await weak.json()).error, "weak_passphrase");
-
-    const ok = await post("/api/migrate", { token: "tok-123", passphrase: PASS });
-    assert.equal(ok.status, 204);
-    await new Promise((r) => setTimeout(r, 50));
-    assert.deepEqual(events, ["migrated"]);
-    assert.equal(migrated?.hosts[0].id, "h");
-    const stored = JSON.parse(openVault(fs.readFileSync(vaultPath), PASS).toString("utf8"));
-    assert.equal(stored.users[0].totpSecret, process.env.OPS_MIG2_TOTP);
-
-    const skip = await post("/api/migrate/skip", { token: "tok-123" });
-    assert.equal(skip.status, 404);
-    await new Promise((r) => setTimeout(r, 50));
-    assert.deepEqual(events, ["migrated"]);
-  } finally {
-    await shutdown(500, "test");
-  }
-});
-
-test("migration mode locks out repeated wrong codes", async () => {
-  const sub = fs.mkdtempSync(path.join(dir, "mig-lock-"));
-  const { server, shutdown } = createMigrateApp({
-    configPath: path.join(sub, "config.json"),
-    vaultPath: path.join(sub, "vault.sealed"),
-    publicDir: sub,
-    token: "right",
-    lockout: new UnsealLockout(2, [60_000]),
-    onMigrated: () => {},
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const post = (token: string) =>
-    fetch(base + "/api/migrate", { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ token }) });
-  try {
-    assert.equal((await post("a")).status, 401);
-    assert.equal((await post("b")).status, 401);
-    assert.equal((await post("right")).status, 429);
-  } finally {
-    await shutdown(500, "test");
-  }
-});
-
-test("migration mode accepts a passphrase from a trusted proxy that reports HTTPS, and refuses one that reports HTTP", async () => {
-  const sub = fs.mkdtempSync(path.join(dir, "mig-proxy-"));
-  fs.mkdirSync(path.join(sub, "v"));
-  const configPath = path.join(sub, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({
-    server: { publicUrl: "https://ssh.example.com" },
-    github: { clientId: "id", clientSecret: "secret" },
-    users: [{ github: 1, totpSecret: base32Encode(Buffer.alloc(20, 2)) }],
-    hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: "pw" }, hostKeyFingerprints: ["SHA256:a"] }],
-  }));
-  const { server, shutdown } = createMigrateApp({
-    configPath,
-    vaultPath: path.join(sub, "v", "vault.sealed"),
-    publicDir: sub,
-    token: "tok",
-    trustProxy: 1,
-    onMigrated: () => {},
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const port = (server.address() as AddressInfo).port;
-  const post = (headers: Record<string, string>) =>
-    new Promise<number>((resolve, reject) => {
-      const body = JSON.stringify({ token: "tok", passphrase: PASS });
-      const req = http.request(
-        { host: "127.0.0.1", port, method: "POST", path: "/api/migrate", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), Host: "ssh.example.com", Origin: "https://ssh.example.com", "X-Forwarded-For": "203.0.113.5", ...headers } },
-        (res) => { res.resume(); res.on("end", () => resolve(res.statusCode ?? 0)); },
-      );
-      req.on("error", reject);
-      req.end(body);
-    });
-  try {
-    assert.equal(await post({ "X-Forwarded-Proto": "http" }), 403);
-    assert.equal(await post({ "X-Forwarded-Proto": "https" }), 204);
   } finally {
     await shutdown(500, "test");
   }

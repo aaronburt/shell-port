@@ -108,7 +108,7 @@ The `deploy/` folder runs Shellport behind Caddy, which handles HTTPS certificat
 
 ## Configuration
 
-Shellport requires `vault.sealed`. A legacy `config.json` can only be imported through mandatory migration or `npm run vault -- seal`. Start from [`config.example.json`](config.example.json). A secret can be a plain string, `{ "env": "VAR_NAME" }` or `{ "file": "path/to/file" }`. Environment and file references are resolved once during setup or migration and stored inside the vault. The running vault does not depend on external secret references.
+Shellport requires `vault.sealed`. A legacy `config.json` can only be imported using `npm run vault -- seal`. Start from [`config.example.json`](config.example.json). A secret can be a plain string, `{ "env": "VAR_NAME" }` or `{ "file": "path/to/file" }`. Environment and file references are resolved once during setup or CLI import and stored inside the vault. The running vault does not depend on external secret references.
 
 | Section | What it controls |
 | --- | --- |
@@ -128,7 +128,7 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 - **SSH key:** the private key stays on the server. If the key is passphrase-protected, the user types the passphrase in the terminal tab when connecting.
 - **Password:** stored on the server as an `env` or `file` secret. It is never sent to the browser.
 
-**Adding hosts from the browser.** A user with `"admin": true` sees an **Add host** button under the host list. The dialog takes a name, optional group, host or IP, port and user, and either an existing key or an uploaded private key. Shellport connects once to read the host's SSH key and pins it, so check that the address is the machine you mean. A key without a passphrase is only saved after the admin confirms a warning; passphrase-protected keys ask for the passphrase in the terminal each time. Every signed-in user sees the new host. Admins also see a pencil on each host: **Edit** changes any field (leave the key as it is, pick another, or upload one) and **Delete host** removes it after a confirmation. Deleting closes open terminals to that host, the last host cannot be deleted, and the host key is pinned again only when the address or port changes. A key file is removed only if Shellport created it and no other host uses it. Nobody is an admin unless you set the flag. The setup wizard marks the first user, and migrating a plain `config.json` into a vault (or `npm run vault -- seal`) promotes the first user when nobody in the file is an admin yet; change it with `npm run vault -- edit`. A server unsealing a vault in which nobody is an admin treats the first user as one (and logs a notice), so vaults made before this feature need no edit; add an `admin` flag to a user, with `npm run vault -- edit`, to choose someone else.  Hosts and uploaded keys are saved in the encrypted vault:
+**Adding hosts from the browser.** A user with `"admin": true` sees an **Add host** button under the host list. The dialog takes a name, optional group, host or IP, port and user, and either an existing key or an uploaded private key. Shellport connects once to read the host's SSH key and pins it, so check that the address is the machine you mean. A key without a passphrase is only saved after the admin confirms a warning; passphrase-protected keys ask for the passphrase in the terminal each time. Every signed-in user sees the new host. Admins also see a pencil on each host: **Edit** changes any field (leave the key as it is, pick another, or upload one) and **Delete host** removes it after a confirmation. Deleting closes open terminals to that host, the last host cannot be deleted, and the host key is pinned again only when the address or port changes. A key file is removed only if Shellport created it and no other host uses it. Nobody is an admin unless you set the flag. The setup wizard marks the first user, and converting a plain `config.json` with `npm run vault -- seal` promotes the first user when nobody in the file is an admin yet; change it with `npm run vault -- edit`. A server unsealing a vault in which nobody is an admin treats the first user as one (and logs a notice), so vaults made before this feature need no edit; add an `admin` flag to a user, with `npm run vault -- edit`, to choose someone else.  Hosts and uploaded keys are saved in the encrypted vault:
 
 - **Sealed:** the host and an uploaded key go into the vault, which is re-encrypted in place. This needs the vault folder to be writable and the server to have been unsealed since the vault was last changed by `npm run vault -- edit` or `import`; otherwise adding fails and you should seal and unseal once.
 
@@ -138,7 +138,7 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 
 Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of `config.json` and `.env`, Shellport has one file, `vault.sealed`, and it starts "sealed": the only page it serves is an unseal screen. Someone who knows the passphrase unlocks it in the browser, after which the usual GitHub sign-in and TOTP code apply. Nothing is ever written to disk in plain text.
 
-**Migrating an existing install.** If Shellport starts and finds a plain `config.json` with no vault, it does not start the app. It opens a migration page instead and prints a one-time **migration code** in its log (`docker compose logs shellport`). Enter the code and a new passphrase, and Shellport encrypts the config (inlining `.env` values and key files), writes `vault.sealed`, and starts the app already unsealed. Migration is required: there is no plaintext running mode, and `SHELLPORT_MIGRATE=off` no longer bypasses encryption. For migration only, temporarily restore the old config and key mounts and environment variables to the compose service. The page accepts the passphrase over HTTPS or on localhost only. The Docker compose files mount a `./vault` folder for this (create it first with `mkdir vault`; on Linux it must be writable by user 1000). Afterwards remove `config.json`, `.env` and `keys/` and their lines from the compose file, because Shellport refuses to start while a vault and a `config.json` both exist.
+**Startup.** When `vault.sealed` is missing, Shellport opens the setup wizard. When it exists, Shellport opens the unseal page. Legacy `config.json` files are ignored by startup. You can configure a fresh vault in setup or explicitly convert an old config using `npm run vault -- seal`. Remove old plaintext config, environment and key files after verifying your vault; they are not automatically deleted.
 
 **Create a vault.** On a fresh install the setup wizard encrypts by default: the last step asks for a passphrase and writes `vault.sealed`, and no plain `config.json` is ever written (encryption is required). Saving is disabled when the vault folder cannot be written. Or convert an existing setup:
 
@@ -146,7 +146,7 @@ Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of 
 npm run vault -- seal      # reads config.json, inlines .env and key-file values, writes vault.sealed
 ```
 
-Then delete `config.json`, `.env` and the key files. Shellport refuses to start while a vault and a `config.json` both exist. In Docker, run the command with `docker compose run --rm --no-deps --entrypoint node shellport dist/vault-cli.js seal`.
+Then delete `config.json`, `.env` and the key files. Startup uses only the vault. In Docker, run the command with `docker compose run --rm --no-deps --entrypoint node shellport dist/vault-cli.js seal`.
 
 **Day to day.**
 
@@ -202,7 +202,7 @@ npm run build
 node dist/server.js
 ```
 
-Open `http://localhost:8080`, enter the setup code from the log, and configure your encrypted vault. The default vault path is `vault.sealed`; set `SHELLPORT_VAULT` to change it. Legacy configs enter mandatory migration.
+Open `http://localhost:8080`, enter the setup code from the log, and configure your encrypted vault. The default vault path is `vault.sealed`; set `SHELLPORT_VAULT` to change it. A missing vault opens setup, including when a legacy config exists.
 
 ## Testing
 

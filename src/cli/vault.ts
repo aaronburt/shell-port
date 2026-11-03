@@ -56,7 +56,7 @@ async function seal() {
   if (weak) die(weak);
   writeFileAtomic(vaultPath, sealVault(json, passphrase));
   console.log(`Wrote ${vaultPath}.`);
-  console.log(`Now remove ${configPath} and any .env or key files it referenced, then restart Shellport. It refuses to start while both exist.`);
+  console.log(`Verify the vault, then remove ${configPath} and any .env or key files it referenced. Restart Shellport to use the vault.`);
 }
 
 function post(socket: string, passphrase: string): Promise<{ status: number; body: string }> {
