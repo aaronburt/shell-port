@@ -56,6 +56,11 @@ export interface AppConfig {
   security: {
     allowUnpinnedHostKeys: boolean;
   };
+  recording: {
+    enabled: boolean;
+    retentionDays: number;
+    maxMB: number;
+  };
   hosts: HostConfig[];
 }
 
@@ -260,6 +265,10 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
 
   const security = { allowUnpinnedHostKeys: Boolean(raw.security?.allowUnpinnedHostKeys) };
 
+  const recordingRaw = raw.recording ?? {};
+  if (typeof recordingRaw !== "object" || Array.isArray(recordingRaw)) fail("recording must be an object");
+  if (recordingRaw.enabled !== undefined && typeof recordingRaw.enabled !== "boolean") fail("recording.enabled must be true or false");
+
   if (!Array.isArray(raw.users) || !raw.users.length) fail("users must list at least one { github, totpSecret } entry");
   const users: LoadedUser[] = raw.users.map((u: UserConfig, i: number) => {
     const [match] = normalizeUsers([u?.github], `users[${i}].github`);
@@ -301,6 +310,11 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
       auditRetentionDays: intOption(raw.limits?.auditRetentionDays, "limits.auditRetentionDays", 90, 1, 3650),
     },
     security,
+    recording: {
+      enabled: recordingRaw.enabled ?? true,
+      retentionDays: intOption(recordingRaw.retentionDays, "recording.retentionDays", 90, 1, 3650),
+      maxMB: intOption(recordingRaw.maxMB, "recording.maxMB", 100, 1, 4096),
+    },
     hosts,
   };
 }
