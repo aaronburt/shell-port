@@ -9,6 +9,7 @@ export interface HostAuthKey {
   type: "key";
   privateKey: SecretRef;
   passphrase?: SecretRef | false;
+  keyName?: string;
 }
 export interface HostAuthPassword {
   type: "password";
@@ -26,6 +27,7 @@ export interface HostConfig {
   auth: HostAuthKey | HostAuthPassword;
   hostKeyFingerprints?: string[];
   allowedUsers?: Array<string | number>;
+  files?: boolean;
 }
 
 export interface AppConfig {
@@ -47,6 +49,8 @@ export interface AppConfig {
     maxTerminalsPerUser: number;
     idleTimeoutMinutes: number;
     loginAttemptsPer15Min: number;
+    maxDownloadMB: number;
+    auditRetentionDays: number;
   };
   security: {
     allowUnpinnedHostKeys: boolean;
@@ -54,14 +58,37 @@ export interface AppConfig {
   hosts: HostConfig[];
 }
 
+export interface StoreIoLike {
+  read(): Record<string, unknown>;
+  write(raw: unknown): void;
+}
+
+export interface PasskeyRecord {
+  id: string;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
+  name: string;
+  createdAt: number;
+  lastUsedAt?: number;
+  githubId: number;
+  login: string;
+  displayName?: string;
+  avatarUrl?: string;
+}
+
 export interface UserConfig {
   github: string | number;
   totpSecret: SecretRef;
+  admin?: boolean;
+  passkeys?: PasskeyRecord[];
 }
 
 export interface LoadedUser {
   match: string;
   totpKey: Buffer;
+  admin: boolean;
+  passkeys: PasskeyRecord[];
 }
 
 export interface LoadedConfig extends Omit<AppConfig, "users"> {
@@ -131,6 +158,88 @@ export function loadConfig(file: string): LoadedConfig {
   return validateConfig(raw, baseDir);
 }
 
+function findReference(node: unknown, where: string): string | undefined {
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length; i++) {
+      const hit = findReference(node[i], `${where}[${i}]`);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  if (node && typeof node === "object") {
+    const keys = Object.keys(node);
+    if (keys.length === 1 && (keys[0] === "env" || keys[0] === "file") && typeof (node as Record<string, unknown>)[keys[0]] === "string") return where;
+    for (const k of keys) {
+      const hit = findReference((node as Record<string, unknown>)[k], where ? `${where}.${k}` : k);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+export function loadSealedConfig(plaintext: Buffer | string, baseDir = process.cwd()): LoadedConfig {
+  let raw: any;
+  try {
+    raw = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    fail("the vault does not contain valid JSON");
+  }
+  const ref = findReference(raw, "");
+  if (ref) fail(`${ref}: a sealed config cannot use env or file references; put the value in the vault itself`);
+  return validateConfig(raw, baseDir);
+}
+
+export function validateHost(h: HostConfig, baseDir: string, security: { allowUnpinnedHostKeys: boolean }, seen: Set<string>) {
+  if (!ID_RE.test(h.id ?? "")) fail(`host id ${JSON.stringify(h.id)} must be 1-64 chars of letters, digits, _ . -`);
+  if (seen.has(h.id)) fail(`duplicate host id ${h.id}`);
+  seen.add(h.id);
+  if (!h.host || !h.username) fail(`host ${h.id}: host and username are required`);
+  h.name ||= h.id;
+  if (h.files !== undefined && typeof h.files !== "boolean") fail(`host ${h.id}: files must be true or false`);
+  h.files ??= true;
+  h.port = intOption(h.port, `host ${h.id} port`, 22, 1, 65535);
+  if (!h.auth || !["key", "password"].includes(h.auth.type)) fail(`host ${h.id}: auth.type must be key or password`);
+  if (h.allowedUsers) h.allowedUsers = normalizeUsers(h.allowedUsers, `host ${h.id} allowedUsers`);
+  if (!h.hostKeyFingerprints?.length && !security.allowUnpinnedHostKeys)
+    fail(`host ${h.id}: hostKeyFingerprints is required (or set security.allowUnpinnedHostKeys for development)`);
+  if (h.auth.type === "key") {
+    const pem = resolveSecret(h.auth.privateKey, baseDir, `host ${h.id} privateKey`, true)!;
+    const encrypted = keyIsEncrypted(pem);
+    if (encrypted === undefined) fail(`host ${h.id}: privateKey is not a readable private key`);
+    if (h.auth.passphrase === undefined && !encrypted)
+      fail(`host ${h.id}: privateKey has no passphrase. Protect it (ssh-keygen -p -f <key>) so users unlock it in the browser, or set "passphrase": false to allow an unencrypted key`);
+    if (h.auth.passphrase === false && encrypted)
+      fail(`host ${h.id}: privateKey is passphrase-protected but "passphrase": false was set`);
+    if (h.auth.passphrase !== undefined && h.auth.passphrase !== false) {
+      const passphrase = resolveSecret(h.auth.passphrase, baseDir, `host ${h.id} passphrase`)!;
+      const parsed = ssh2.utils.parseKey(pem, passphrase);
+      if (parsed instanceof Error || (Array.isArray(parsed) && parsed[0] instanceof Error))
+        fail(`host ${h.id}: the configured passphrase does not unlock privateKey`);
+    }
+  }
+  if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
+}
+
+function validatePasskeys(list: unknown, what: string): PasskeyRecord[] {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) fail(`${what} passkeys must be an array`);
+  const seen = new Set<string>();
+  return list.map((p: any, i) => {
+    const at = `${what} passkeys[${i}]`;
+    if (!p || typeof p !== "object") fail(`${at} must be an object`);
+    if (typeof p.id !== "string" || !/^[A-Za-z0-9_-]{1,1024}$/.test(p.id)) fail(`${at}.id must be a base64url string`);
+    if (seen.has(p.id)) fail(`${at}.id is a duplicate`);
+    seen.add(p.id);
+    if (typeof p.publicKey !== "string" || !/^[A-Za-z0-9_-]+$/.test(p.publicKey)) fail(`${at}.publicKey must be a base64url string`);
+    if (!Number.isInteger(p.counter) || p.counter < 0) fail(`${at}.counter must be a non-negative integer`);
+    if (typeof p.name !== "string" || !p.name) fail(`${at}.name is required`);
+    if (!Number.isFinite(p.createdAt)) fail(`${at}.createdAt must be a timestamp`);
+    if (!Number.isInteger(p.githubId) || typeof p.login !== "string" || !p.login) fail(`${at} needs githubId and login`);
+    if (p.transports !== undefined && (!Array.isArray(p.transports) || p.transports.some((t: unknown) => typeof t !== "string"))) fail(`${at}.transports must be a list of strings`);
+    return p as PasskeyRecord;
+  });
+}
+
 export function validateConfig(raw: any, baseDir: string): LoadedConfig {
   const server = raw.server ?? {};
   const publicUrl = String(server.publicUrl ?? "").replace(/\/+$/, "");
@@ -149,40 +258,14 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
     let totpKey: Buffer | undefined;
     try { totpKey = base32Decode(secret); } catch { fail(`users[${i}] totpSecret is not valid base32`); }
     if (totpKey.length < 16) fail(`users[${i}] totpSecret is too short (need at least 128 bits; use npm run totp)`);
-    return { match, totpKey };
+    if (u.admin !== undefined && typeof u.admin !== "boolean") fail(`users[${i}] (${match}) admin must be true or false`);
+    return { match, totpKey, admin: u.admin === true, passkeys: validatePasskeys(u.passkeys, `users[${i}] (${match})`) };
   });
 
   const hosts: HostConfig[] = raw.hosts ?? [];
   if (!Array.isArray(hosts) || !hosts.length) fail("hosts must be a non-empty array");
   const seen = new Set<string>();
-  for (const h of hosts) {
-    if (!ID_RE.test(h.id ?? "")) fail(`host id ${JSON.stringify(h.id)} must be 1-64 chars of letters, digits, _ . -`);
-    if (seen.has(h.id)) fail(`duplicate host id ${h.id}`);
-    seen.add(h.id);
-    if (!h.host || !h.username) fail(`host ${h.id}: host and username are required`);
-    h.name ||= h.id;
-    h.port = intOption(h.port, `host ${h.id} port`, 22, 1, 65535);
-    if (!h.auth || !["key", "password"].includes(h.auth.type)) fail(`host ${h.id}: auth.type must be key or password`);
-    if (h.allowedUsers) h.allowedUsers = normalizeUsers(h.allowedUsers, `host ${h.id} allowedUsers`);
-    if (!h.hostKeyFingerprints?.length && !security.allowUnpinnedHostKeys)
-      fail(`host ${h.id}: hostKeyFingerprints is required (or set security.allowUnpinnedHostKeys for development)`);
-    if (h.auth.type === "key") {
-      const pem = resolveSecret(h.auth.privateKey, baseDir, `host ${h.id} privateKey`, true)!;
-      const encrypted = keyIsEncrypted(pem);
-      if (encrypted === undefined) fail(`host ${h.id}: privateKey is not a readable private key`);
-      if (h.auth.passphrase === undefined && !encrypted)
-        fail(`host ${h.id}: privateKey has no passphrase. Protect it (ssh-keygen -p -f <key>) so users unlock it in the browser, or set "passphrase": false to allow an unencrypted key`);
-      if (h.auth.passphrase === false && encrypted)
-        fail(`host ${h.id}: privateKey is passphrase-protected but "passphrase": false was set`);
-      if (h.auth.passphrase !== undefined && h.auth.passphrase !== false) {
-        const passphrase = resolveSecret(h.auth.passphrase, baseDir, `host ${h.id} passphrase`)!;
-        const parsed = ssh2.utils.parseKey(pem, passphrase);
-        if (parsed instanceof Error || (Array.isArray(parsed) && parsed[0] instanceof Error))
-          fail(`host ${h.id}: the configured passphrase does not unlock privateKey`);
-      }
-    }
-    if (h.auth.type === "password") resolveSecret(h.auth.password, baseDir, `host ${h.id} password`);
-  }
+  for (const h of hosts) validateHost(h, baseDir, security, seen);
 
   return {
     baseDir,
@@ -203,6 +286,8 @@ export function validateConfig(raw: any, baseDir: string): LoadedConfig {
       maxTerminalsPerUser: intOption(raw.limits?.maxTerminalsPerUser, "limits.maxTerminalsPerUser", 10, 1),
       idleTimeoutMinutes: intOption(raw.limits?.idleTimeoutMinutes, "limits.idleTimeoutMinutes", 30, 0),
       loginAttemptsPer15Min: intOption(raw.limits?.loginAttemptsPer15Min, "limits.loginAttemptsPer15Min", 30, 1),
+      maxDownloadMB: intOption(raw.limits?.maxDownloadMB, "limits.maxDownloadMB", 256, 1, 4096),
+      auditRetentionDays: intOption(raw.limits?.auditRetentionDays, "limits.auditRetentionDays", 90, 1, 3650),
     },
     security,
     hosts,
@@ -228,6 +313,16 @@ export function userAllowed(list: Array<string | number>, who: Identity): boolea
     const s = String(e);
     return /^\d+$/.test(s) ? s === id : s === login;
   });
+}
+
+export function isAdmin(cfg: Pick<LoadedConfig, "users">, who: Identity): boolean {
+  return cfg.users.some((u) => u.admin && userAllowed([u.match], who));
+}
+
+export function promoteFirstAdmin(cfg: Pick<LoadedConfig, "users">): string | undefined {
+  if (!cfg.users.length || cfg.users.some((u) => u.admin)) return undefined;
+  cfg.users[0].admin = true;
+  return cfg.users[0].match;
 }
 
 export function findUser(cfg: LoadedConfig, who: Identity): LoadedUser | undefined {

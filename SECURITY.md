@@ -13,14 +13,18 @@ Please report vulnerabilities privately with GitHub private vulnerability report
 Shellport gives a signed-in browser a shell on pre-configured hosts, so a compromise of the service is a compromise of those hosts. The design assumes:
 
 - **Trusted:** the server operator, the machine running Shellport, and the contents of `config.json`, `.env` and `keys/`.
+- **Administrators:** users with `"admin": true` can add, edit and delete hosts and upload SSH keys from the browser, so an admin account is as powerful as the server operator for choosing where Shellport connects. Keep the flag to as few people as possible. Adding a host makes the server open one connection to the address given (to read and pin its host key), so an admin can use it to probe addresses the server can reach. Editing a host's address or port probes it the same way. Each add, edit and delete is rate limited, needs the same `Origin`, and is written to the audit log with the user, target and whether a key was uploaded, never the key.
 - **Authenticated, partly trusted:** users listed in `config.json`. They pass GitHub sign-in and a TOTP code, and can reach only the hosts they are allowed. They can run anything the configured SSH account can run.
 - **Untrusted:** everyone else on the network, other websites open in a user's browser, and the content of the remote hosts' output.
 
 What it defends against:
 
-- Anonymous access: GitHub OAuth plus a required, single-use TOTP code, with rate limits on sign-in and code entry.
+- Anonymous access: GitHub OAuth plus a required, single-use TOTP code, or a passkey, with rate limits on sign-in and code entry.
+- Passkeys: a signed-in user can register passkeys for their own account only. They require a resident credential and user verification (fingerprint, face or PIN), so a passkey sign-in stands on its own and skips GitHub and TOTP. Challenges are random, single use and expire after five minutes. The server checks origin, relying party ID (the host in `publicUrl`), signature and the signature counter. A passkey only works while its owner is still in `users`, and the public keys are stored with that user (inside the sealed vault when sealed). Removing a user or a passkey ends its ability to sign in, but existing sessions run until they expire or are signed out. Passkeys are tied to the `publicUrl` host name, so changing it makes them stop working.
+- Unattended browsers: the screen lock hides the terminals and blocks input in the browser until the signed-in user enters a fresh authenticator code or uses one of their own passkeys. The server checks the code or passkey (single use, rate limited), and five failures end the session. It is a client-side lock: terminal output still reaches the page and the session cookie still works elsewhere, so it does not stop someone with devtools or a copy of the cookie.
 - Cross-site attacks: exact `Origin` check on the WebSocket, `SameSite` HttpOnly cookies, no CORS, a strict Content-Security-Policy with no inline or third-party scripts, and no framing.
-- Credential theft from the browser: SSH keys and passwords stay on the server and are never sent to the client. Key hosts ask the user for the key passphrase in the terminal tab, and it is never stored or logged.
+- Credential theft from the browser: SSH keys and passwords stay on the server and are never sent to the client. Key hosts ask the user for the key passphrase in the terminal tab, and the server never stores or logs it.
+- Abuse of the file explorer: it uses the terminal's own SSH connection, so no second login or credential is involved. Each request needs the signed-in session that owns the terminal and an unguessable terminal id, and deletes also need the same `Origin`. Paths must be absolute with no `..` or control characters, previews and downloads are size limited, at most two downloads run per terminal, and every list, view, download and delete is written to the audit log with the user, host and path. A host can opt out with `files: false`.
 - Man-in-the-middle on the SSH hop: host keys must be pinned by fingerprint, and a mismatch is refused and logged.
 
 Design notes (choices that look odd but are deliberate):
@@ -34,9 +38,30 @@ Design notes (choices that look odd but are deliberate):
 
 What it does not defend against:
 
-- Anyone who can read the server's files or environment, since TOTP secrets and host credentials are stored there in plaintext.
-- A user who has passed both factors: there is no per-command control or session recording.
+- Anyone who can read the server's files or environment, since TOTP secrets and host credentials are stored there in plaintext. Sealed mode removes this for files at rest; see below.
+- A user who has passed both factors: there is no per-command control or session recording. The file explorer can read and delete anything the configured SSH account can, exactly like the terminal can; Shellport adds no path jail beyond that account's permissions.
 - Running over plain HTTP on an untrusted network. Use HTTPS, and preferably put the service behind a VPN or an identity-aware proxy.
 - Multiple instances: sessions are in memory and per-IP rate limits are not shared.
 
+## Sealed mode
+
+An optional vault (`vault.sealed`) replaces `config.json` and `.env`. See the README for how to use it.
+
+- **Format.** The passphrase goes through scrypt (N=2^17, r=8, p=1) to a key that wraps a random 256-bit data key with AES-256-GCM, and the data key encrypts the config with AES-256-GCM. The header (version and KDF settings) is authenticated, so changed settings are detected. Changing the passphrase re-wraps the data key without re-encrypting the contents. The KDF name is stored in the header so Argon2id can be added later.
+- **Protects against:** a disk image, backup, container layer or leaked volume that does not include the running process. Without the passphrase, host passwords, SSH keys, OAuth secret and TOTP secrets are unreadable and tampering is detected.
+- **Does not protect against:** anyone who can read the running process's memory, or who can unseal it, since the decrypted config lives in memory while the server is unsealed. A weak passphrase can be guessed offline against a stolen vault; use a long one. There is no recovery path if the passphrase is lost, by design.
+- **Sealed server surface.** While sealed it serves only the unseal page, its static assets, `/healthz` and `POST /api/unseal`. Unsealing needs a same-origin request over HTTPS (or from loopback), accepts a body of at most 2 KB, and has a global lockout after repeated failures. Successful and failed attempts are audit-logged.
+- **Migration page.** When a plain `config.json` exists and no vault does, the server serves only a migration page until someone enters the one-time code from its log (compared in constant time, with a lockout on repeated wrong codes). Without log access the page cannot be used to set a passphrase. It accepts the passphrase over HTTPS or when the request is addressed to localhost.
+- **Local unseal socket.** A sealed server also listens on `<vault>.sock` with mode 0600. Anyone who can open it can try passphrases without the web lockout, so protect the directory like the vault itself.
+- **The passphrase** is used once to derive a key, then dropped; derived keys and decrypted buffers are zeroed after use where Node allows. The one exception is the vault's data key, which an unsealed server keeps in memory so admins can add hosts and keys without being asked for the passphrase again. It is zeroed when the server is sealed. It is sent to the server in the unseal request, so the server operator and the TLS endpoint are trusted with it.
+- **Plain-text leftovers.** `export` and the editor's temporary file contain secrets in plain text. The temporary file is mode 0600, placed in `/dev/shm` when available, and overwritten and removed afterwards.
+
 Do not commit `.env`, `config.json`, `keys/` or any private key. The repository's `.gitignore` excludes them.
+
+## Passphrase auto enter (browser-side, opt-in)
+
+Off by default and a riskier option: the passphrase is left in the browser's storage, and the Account page says so. When a user turns it on in Account, a passphrase they type for a host is kept in that browser and sent again on the next connect. The server is not involved: it receives the passphrase through the same message as a typed one and stores nothing.
+
+- Each passphrase is encrypted with AES-GCM using a key generated in the browser as non-extractable, and both live in IndexedDB. The record is bound to the signed-in login and the host id, so another user on the same browser profile cannot use it.
+- Saved passphrases are deleted when the user signs out, turns the setting off or presses **Forget all**. A passphrase is saved only after the connection it unlocked succeeds, and one that stops working is deleted. A session that expires without a sign-out leaves them in place.
+- What this does not protect against: anyone who can run code in the page (an XSS bug) or use the unlocked browser profile can read the passphrase, because the browser decrypts it on their behalf. It keeps passphrases out of plain text in browser storage and stops the key being exported, but it is not protection against a compromised browser or a stolen unlocked profile. Do not enable it on shared or untrusted machines. It needs a secure context (HTTPS or localhost).

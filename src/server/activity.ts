@@ -9,6 +9,7 @@ export interface Activity {
   ip: string;
   at: number;
   sid?: string;
+  method?: "github" | "passkey";
   host?: string;
 }
 

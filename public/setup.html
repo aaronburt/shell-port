@@ -65,15 +65,15 @@
         <div class="form-group">
           <label for="gh-secret-type">Client Secret Storage</label>
           <div class="inline-radios">
-            <label><input type="radio" name="ghSecretType" value="env" checked> Environment variable</label>
-            <label><input type="radio" name="ghSecretType" value="literal"> Inline string</label>
+            <label><input type="radio" name="ghSecretType" value="env"> Environment variable</label>
+            <label><input type="radio" name="ghSecretType" value="literal" checked> Inline string</label>
           </div>
         </div>
-        <div class="form-group" id="gh-secret-env-group">
+        <div class="form-group" id="gh-secret-env-group" hidden>
           <label for="gh-secret-env">Environment Variable Name</label>
           <input type="text" id="gh-secret-env" name="ghSecretEnv" value="SHELLPORT_GITHUB_SECRET">
         </div>
-        <div class="form-group" id="gh-secret-lit-group" hidden>
+        <div class="form-group" id="gh-secret-lit-group">
           <label for="gh-secret-lit">Client Secret Value</label>
           <input type="password" id="gh-secret-lit" name="ghSecretLit" placeholder="GitHub Client Secret">
         </div>
@@ -139,6 +139,14 @@
       <div id="action-status" class="alert-box success" role="status" hidden></div>
       <div class="code-preview-wrap">
         <pre><code id="json-preview"></code></pre>
+      </div>
+      <div class="seal-opt">
+        <label><input type="checkbox" id="seal-enable" checked> Encrypt the configuration with a passphrase (recommended)</label>
+        <div id="seal-fields">
+          <input type="password" id="seal-pass" autocomplete="new-password" placeholder="Passphrase (12+ characters)" aria-label="Passphrase">
+          <input type="password" id="seal-pass2" autocomplete="new-password" placeholder="Repeat passphrase" aria-label="Repeat passphrase">
+          <p class="hint" id="seal-hint">Saved to <span id="seal-path">vault.sealed</span> instead of config.json, so no plain-text config is written. Secrets given as environment variables are read from the server now and stored inside the vault. You will enter this passphrase every time the server starts. If it is lost, the vault cannot be recovered.</p>
+        </div>
       </div>
       <div class="actions-stack">
         <button type="button" class="btn" id="btn-validate">Validate</button>

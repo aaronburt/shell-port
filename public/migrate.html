@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Encrypt configuration · Shellport</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/migrate.css">
+</head>
+<body>
+<main class="gate">
+  <div class="gate-col">
+    <span class="logo big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+    <h1>Encrypt your configuration</h1>
+    <p class="gate-error" id="error" role="alert" hidden></p>
+    <form class="gate-box" id="form" autocomplete="off">
+      <label class="field" for="code">Shellport found a plain <code id="cfg-path">config.json</code>. Encrypt it into a vault that needs a passphrase to open. Enter the migration code printed in the server log.</label>
+      <input id="code" name="code" type="text" autocomplete="off" spellcheck="false" placeholder="Migration code" required>
+      <input id="pass" name="passphrase" type="password" autocomplete="new-password" spellcheck="false" placeholder="New passphrase (12+ characters)" required>
+      <input id="pass2" name="passphrase2" type="password" autocomplete="new-password" spellcheck="false" placeholder="Repeat passphrase" required>
+      <button class="btn" type="submit" id="go">Encrypt and start</button>
+      <button class="btn ghost" type="button" id="skip">Continue without encrypting</button>
+    </form>
+    <p class="gate-note">If the passphrase is lost the vault cannot be recovered. Afterwards remove the plain config, <code>.env</code> and key files from this install; Shellport will not start while both a vault and a <code>config.json</code> exist.</p>
+  </div>
+</main>
+<script src="/assets/migrate.js"></script>
+</body>
+</html>

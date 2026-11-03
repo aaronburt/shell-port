@@ -371,11 +371,11 @@ function buildConfigObject(): any {
   const ghSecretLit = (document.getElementById("gh-secret-lit") as HTMLInputElement)?.value || "";
   const githubSecret = ghSecretType === "literal" ? ghSecretLit : { env: ghSecretEnv };
 
-  const users = usersState.map((u) => {
+  const users = usersState.map((u, i) => {
     const rawGh = u.github.trim();
     const github = /^\d+$/.test(rawGh) ? Number(rawGh) : rawGh;
     const totpSecret = u.secretType === "literal" ? u.secretValue.trim() : { env: u.secretValue.trim() };
-    return { github, totpSecret };
+    return i === 0 ? { github, totpSecret, admin: true } : { github, totpSecret };
   });
 
   const hosts = hostsState.map((h) => {
@@ -534,11 +534,25 @@ async function saveConfig(): Promise<void> {
   }
 
   const cfg = buildConfigObject();
+  const sealOn = (document.getElementById("seal-enable") as HTMLInputElement | null)?.checked;
+  const pass = (document.getElementById("seal-pass") as HTMLInputElement | null)?.value ?? "";
+  const pass2 = (document.getElementById("seal-pass2") as HTMLInputElement | null)?.value ?? "";
+  if (sealOn && pass !== pass2) {
+    if (errorBox) {
+      errorBox.textContent = "The two passphrases do not match.";
+      errorBox.hidden = false;
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Save & Start Shellport";
+    }
+    return;
+  }
   try {
     const res = await fetch("/api/setup/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cfg),
+      body: JSON.stringify(sealOn ? { config: cfg, passphrase: pass } : cfg),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) {
@@ -598,6 +612,20 @@ async function initSetup(): Promise<void> {
 
       const targetPathEl = document.getElementById("target-path");
       if (targetPathEl) targetPathEl.textContent = targetConfigPath;
+
+      const sealBox = document.getElementById("seal-enable") as HTMLInputElement | null;
+      const sealFields = document.getElementById("seal-fields");
+      const sealPath = document.getElementById("seal-path");
+      if (sealPath && data.vaultPath) sealPath.textContent = data.vaultPath;
+      if (sealBox && !data.vaultWritable) {
+        sealBox.checked = false;
+        sealBox.disabled = true;
+        if (sealFields) sealFields.hidden = true;
+        const hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = `Encryption is unavailable because ${data.vaultPath || "the vault path"} cannot be written. Mount a writable folder there (see the README) to enable it.`;
+        sealBox.closest(".seal-opt")?.appendChild(hint);
+      }
 
       const notePath = document.getElementById("note-path");
       if (notePath) notePath.textContent = targetConfigPath;
@@ -662,6 +690,10 @@ async function initSetup(): Promise<void> {
   document.getElementById("btn-copy")?.addEventListener("click", copyConfigJson);
   document.getElementById("btn-download")?.addEventListener("click", downloadConfigJson);
   document.getElementById("btn-save")?.addEventListener("click", saveConfig);
+  document.getElementById("seal-enable")?.addEventListener("change", (e) => {
+    const fields = document.getElementById("seal-fields");
+    if (fields) fields.hidden = !(e.target as HTMLInputElement).checked;
+  });
 
   renderUsers();
   renderHosts();

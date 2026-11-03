@@ -188,7 +188,7 @@ await check("GET /auth/totp without a pending login is 401", async () => {
 });
 
 section("Authentication is enforced");
-for (const p of ["/api/me", "/api/hosts", "/api/signins"]) {
+for (const p of ["/api/me", "/api/hosts", "/api/signins", "/api/terminals/smoke/files", "/api/terminals/smoke/files/view?path=/etc/hostname", "/api/terminals/smoke/files/download?path=/etc/hostname"]) {
   await check(`GET ${p} without a session is 401`, async () => {
     const r = await request("GET", p);
     expect(r.status === 401, `status ${r.status}`);
@@ -316,6 +316,12 @@ for (const [method, p] of [["POST", "/auth/logout"], ["POST", "/auth/totp"]]) {
     expect(r.status === 403, `status ${r.status}`);
   });
 }
+
+await check("POST file delete without a session is refused", async () => {
+  const r = await request("POST", "/api/terminals/smoke/files/delete", { headers: { origin: EVIL, "content-type": "application/json" }, body: JSON.stringify({ path: "/tmp/x" }) });
+  expect(r.status === 401 || r.status === 403, `status ${r.status}`);
+  expectNoLeak(r);
+});
 
 await check("POST /api/signins/signout-others without a session is refused", async () => {
   const r = await request("POST", "/api/signins/signout-others", { headers: { origin: EVIL } });

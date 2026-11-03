@@ -1,0 +1,6 @@
+@import "./login.css";
+.gate-box input[type="password"] { font: 500 16px var(--f-ui); letter-spacing: normal; text-align: left; }
+.logo.big svg { width: 24px; height: 24px; }
+.seal-state { display: inline-flex; align-items: center; gap: 8px; font-family: var(--f-mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.seal-state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.btn:disabled { opacity: .6; cursor: default; }

@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
-import ssh2, { Client, type ConnectConfig, type ClientChannel } from "ssh2";
+import { Client, type ConnectConfig, type ClientChannel, type SFTPWrapper } from "ssh2";
 import type { Socket } from "node:net";
 import type { WebSocket, RawData } from "ws";
 import { resolveSecret, hostNeedsPassphrase, type HostConfig, type LoadedConfig } from "./config.js";
 import type { RateLimiter, UserSession } from "./sessions.js";
 import { audit } from "./log.js";
 import type { ActivityLog } from "./activity.js";
+import type { AuditLog } from "./auditlog.js";
+import { FileError } from "./sftp.js";
 
 const HIGH_WATER = 1 << 20;
 const PASSPHRASE_TRIES = 3;
@@ -19,8 +21,12 @@ export interface TerminalTiming {
 }
 
 export interface TerminalInfo {
+  id: string;
   user: string;
   hostId: string;
+  files: boolean;
+  sftp(): Promise<SFTPWrapper>;
+  touch(): void;
   close(reason: string): void;
 }
 
@@ -55,6 +61,7 @@ export function openTerminal(opts: {
   host: HostConfig;
   session: UserSession;
   activity: ActivityLog;
+  auditLog: AuditLog;
   passphraseLimiter: RateLimiter;
   ip: string;
   timing?: TerminalTiming;
@@ -77,9 +84,37 @@ export function openTerminal(opts: {
   let passphraseTimer: NodeJS.Timeout | undefined;
   let drainTimer: NodeJS.Timeout | undefined;
   let inputPaused = false;
+  let connectStart = 0;
+  const phases: Record<string, number> = {};
+  const mark = (name: string) => { phases[name] = Date.now() - connectStart; };
+
+  const id = crypto.randomBytes(16).toString("base64url");
+  let ready = false;
+  let sftpPromise: Promise<SFTPWrapper> | undefined;
+  const files = host.files !== false;
+  const sftp = (): Promise<SFTPWrapper> => {
+    if (!files) return Promise.reject(new FileError(403, "files_disabled"));
+    if (!ready || closed) return Promise.reject(new FileError(409, "not_connected"));
+    sftpPromise ??= new Promise<SFTPWrapper>((resolve, reject) => {
+      ssh.sftp((err, s) => {
+        if (err) {
+          sftpPromise = undefined;
+          return reject(new FileError(502, "sftp_unavailable"));
+        }
+        s.on("close", () => { sftpPromise = undefined; });
+        resolve(s);
+      });
+    });
+    return sftpPromise;
+  };
+  const touch = () => { lastActivity = Date.now(); };
+  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, files, sftp, touch, close: (reason) => close(reason) };
 
   const ssh = new Client();
   const auditBase = { user: session.login, host: host.id, ip };
+  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string) =>
+    opts.auditLog.add({ kind, user: session.login, ip, host: host.name, detail });
+  let opened = false;
 
   const close = (reason: string) => {
     if (closed) return;
@@ -92,6 +127,7 @@ export function openTerminal(opts: {
     send({ t: "status", state: "closed", reason });
     if (ws.readyState === ws.OPEN) ws.close(1000, reason.slice(0, 120));
     audit("terminal.close", { ...auditBase, reason, seconds: Math.round((Date.now() - started) / 1000), bytesIn, bytesOut });
+    if (opened) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`);
     opts.onClose();
   };
 
@@ -132,28 +168,37 @@ export function openTerminal(opts: {
     }
   } catch (e) {
     audit("terminal.error", { ...auditBase, error: (e as Error).message });
+    trail("ssh_failed", "Credentials are misconfigured on the server");
     send({ t: "error", message: "This host's credentials are misconfigured on the server." });
     queueMicrotask(() => close("Configuration error"));
-    return { user: session.login, hostId: host.id, close };
+    return handle;
   }
 
   let cipher = "";
   ssh.on("handshake", (n) => {
+    mark("handshakeMs");
     cipher = n.cs.cipher;
   });
 
   ssh.on("ready", () => {
+    ready = true;
+    mark("authMs");
     ssh.shell({ term: "xterm-256color", ...size }, (err, s) => {
       if (err) {
         send({ t: "error", message: "The host refused to open a shell." });
         return close("Shell refused");
       }
       stream = s;
-      audit("terminal.open", auditBase);
+      mark("shellMs");
+      audit("terminal.open", { ...auditBase, ...phases });
+      opened = true;
+      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}`);
       send({
         t: "status",
         state: "connected",
         info: {
+          id,
+          files,
           host: `${host.host}:${host.port}`,
           user: host.username,
           auth: host.auth.type === "key"
@@ -188,6 +233,7 @@ export function openTerminal(opts: {
   ssh.on("error", (err) => {
     if (closed) return;
     audit("terminal.error", { ...auditBase, error: err.message });
+    trail("ssh_failed", friendlyError(err, mismatch));
     send({ t: "error", message: friendlyError(err, mismatch) });
     close("Connection failed");
   });
@@ -241,6 +287,7 @@ export function openTerminal(opts: {
   function failPassphrase(restartTimer: boolean) {
     passphraseTries++;
     audit("terminal.passphrase_failed", { ...auditBase, attempt: passphraseTries });
+    trail("passphrase_failed", `Attempt ${passphraseTries} of ${PASSPHRASE_TRIES}`);
     opts.activity.add({ kind: "passphrase_failed", githubId: session.githubId, ip, host: host.id });
     if (passphraseTries >= PASSPHRASE_TRIES) {
       send({ t: "error", message: "Incorrect passphrase." });
@@ -252,26 +299,38 @@ export function openTerminal(opts: {
   function submitPassphrase(value: string) {
     if (!opts.passphraseLimiter.hit(`${session.githubId}:${host.id}`)) {
       audit("terminal.passphrase_throttled", auditBase);
+      trail("ssh_failed", "Too many incorrect passphrases, throttled");
       send({ t: "error", message: "Too many incorrect passphrases. Try again later." });
       return close("Passphrase attempts throttled");
     }
     if (!value || value.length > MAX_PASSPHRASE_LEN) return failPassphrase(false);
     awaitingPassphrase = false;
     clearTimeout(passphraseTimer);
-    const parsed = ssh2.utils.parseKey(keyText!, value);
-    const key = Array.isArray(parsed) ? parsed[0] : parsed;
-    if (key instanceof Error || !key) return failPassphrase(true);
     conn.privateKey = keyText;
     conn.passphrase = value;
+    connectStart = Date.now();
+    try {
+      ssh.connect(conn);
+    } catch (e) {
+      conn.passphrase = undefined;
+      if (/^Cannot parse privateKey/.test((e as Error).message)) return failPassphrase(true);
+      audit("terminal.error", { ...auditBase, error: (e as Error).message });
+      send({ t: "error", message: "SSH connection failed." });
+      return close("Connection failed");
+    }
+    mark("decryptMs");
     send({ t: "status", state: "connecting" });
-    ssh.connect(conn);
     conn.passphrase = undefined;
     keyText = undefined;
   }
 
   send({ t: "status", state: "connecting" });
   if (needsPassphrase) askPassphrase(false);
-  else ssh.connect(conn);
+  else {
+    connectStart = Date.now();
+    ssh.connect(conn);
+    mark("connectCallMs");
+  }
 
-  return { user: session.login, hostId: host.id, close };
+  return handle;
 }

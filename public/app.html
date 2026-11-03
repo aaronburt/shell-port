@@ -17,7 +17,10 @@
     </div>
     <div class="tab-scroll" id="tab-scroll"></div>
     <div class="tab-tools">
+      <button class="tool" id="lock-btn" type="button" aria-label="Lock screen" title="Lock screen (Alt Shift L). Sessions stay connected."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+      <button class="tool" id="layout-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Pane layout and sessions" title="Layout and sessions (up to 8 per view)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg><span class="mono" id="pane-count">1/8</span></button>
       <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      <div class="lay-pop" id="layout-pop" role="dialog" aria-label="Layout and sessions" hidden></div>
     </div>
   </div>
 
@@ -25,39 +28,21 @@
     <div class="hosts" id="hosts"></div>
     <div class="rail-foot">
       <div class="me">
-        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" aria-haspopup="dialog" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
-        <span class="who"><small id="me-login"></small></span>
+        <button class="avatar avatar-btn" id="account-btn" aria-label="Account menu" title="Account"><img class="avatar-img" id="me-avatar" alt="" hidden><span id="me-initials"></span></button>
+        <span class="who"><small id="me-login"></small><small class="role" id="me-role" hidden>admin</small></span>
       </div>
+      <button class="btn ghost add-host" id="add-host" type="button" aria-label="Add host" title="Add host" hidden><b>+</b><span>Add host</span></button>
     </div>
   </aside>
 
   <div class="main">
     <div class="term-wrap">
       <div class="terms" id="terms">
-        <div class="empty" id="empty">
-          <span class="logo big">&gt;_</span>
-          <p>Pick a host from the sidebar to open a terminal.</p>
-        </div>
-      </div>
-      <aside class="drawer" id="drawer" aria-label="Session details">
-        <div class="drawer-body">
-          <div class="drawer-head split"><h5>Session</h5><button class="tool" id="close-session" hidden>Close session</button></div>
-          <dl class="kv" id="kv"></dl>
-          <div class="drawer-head split"><h5>Sign-ins</h5><button class="tool" id="signout-others" hidden>Sign out others</button></div>
-          <div class="acts" id="signins"></div>
-        </div>
-      </aside>
-    </div>
-    <div class="notice" id="notice" role="alert" hidden></div>
-  </div>
-</section>
-
-<dialog class="acct" id="acct" aria-labelledby="acct-title">
+        <div class="page acct" id="page-account" hidden>
   <div class="acct-body">
     <header class="acct-head">
       <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
-      <div><h3 id="acct-title"></h3><small>Signed in with GitHub</small></div>
-      <button class="tool acct-x" id="acct-x" type="button" aria-label="Close account">×</button>
+      <div><h3 id="acct-title"></h3><small id="acct-via">Signed in with GitHub</small></div>
     </header>
     <section class="acct-sec">
       <h5>Display</h5>
@@ -65,17 +50,103 @@
         <div><strong id="addr-label">Hide host addresses</strong><small>Hide the user@host line under each host in the sidebar.</small></div>
         <button class="switch" id="addr-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="addr-label"></button>
       </div>
+      <div class="acct-row acct-zoom">
+        <div><strong id="zoom-label">Interface zoom</strong><small>Scale the whole interface. Saved in this browser.</small></div>
+        <div class="stepper" role="group" aria-labelledby="zoom-label">
+          <button class="tool" id="zoom-out" type="button" aria-label="Zoom out">−</button>
+          <button class="tool zoom-val" id="zoom-reset" type="button" aria-label="Reset zoom to 100%" title="Reset to 100%">100%</button>
+          <button class="tool" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+    </section>
+    <section class="acct-sec">
+      <h5>Screen lock</h5>
+      <div class="acct-row">
+        <div><strong>Lock now</strong><small>Hide every terminal and block input. Your sessions stay connected. Unlock with a passkey or your authenticator code.</small></div>
+        <button class="btn ghost" id="lock-now" type="button">Lock</button>
+      </div>
+      <div class="acct-row">
+        <div><strong id="al-label">Auto-lock when idle</strong><small>Lock after no keyboard or mouse activity in this browser tab. Saved in this browser.</small></div>
+        <button class="switch" id="al-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="al-label"></button>
+      </div>
+      <div class="acct-row" id="al-row" hidden>
+        <div><strong>Idle time</strong></div>
+        <select id="al-mins" aria-label="Idle time before locking"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select>
+      </div>
+    </section>
+    <section class="acct-sec" id="acct-pk-sec" hidden>
+      <h5>Passkeys</h5>
+      <p class="fine pk-intro">A passkey lets you sign in from the sign-in page without GitHub or an authenticator code. Your device checks it is really you (fingerprint, face or PIN) before it signs.</p>
+      <ul class="pk-list" id="pk-list"></ul>
+      <div class="pk-foot"><p class="fine">You can only add a passkey while signed in. Your GitHub account must stay on this server's allowlist.</p><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
+    </section>
+    <section class="acct-sec" id="acct-ap-sec" hidden>
+      <h5>SSH key passphrases</h5>
+      <div class="acct-row">
+        <div><strong id="ap-label">Passphrase auto enter</strong><small>Remember the passphrase for each host after you type it once, and enter it for you next time. Stored only in this browser, encrypted with a key the browser cannot export. Never saved on the server.</small></div>
+        <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
+      </div>
+      <div class="alert ap-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg><div><b>Riskier option.</b> The passphrase is left in this browser's storage. Anyone who can use this browser profile while you are signed in, or run code in this page, can read it and unlock your SSH key. Only turn this on for a device you fully trust.</div></div>
+      <div class="acct-row">
+        <div><strong>Saved on this browser</strong><small id="ap-count">Nothing saved.</small><small>Saved passphrases are also forgotten when you sign out, and a saved one that stops working is discarded.</small></div>
+        <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>
+      </div>
+    </section>
+    <section class="acct-sec" id="acct-audit-sec" hidden>
+      <h5>Audit log</h5>
+      <div class="acct-row">
+        <div><strong>Who connected, and when</strong><small>Sign-ins, SSH connections to each host, host and key changes, passkeys, failed unlocks and sealing. Opens in its own tab. Admins only.</small></div>
+        <button class="btn ghost" id="acct-audit" type="button">Open</button>
+      </div>
+    </section>
+    <section class="acct-sec" id="acct-seal-sec" hidden>
+      <h5>Server</h5>
+      <div class="acct-row">
+        <div><strong>Vault</strong><small>Unsealed. Sealing signs everyone out, closes every terminal and locks the server until the passphrase is entered again.</small></div>
+        <button class="btn ghost" id="acct-seal" type="button">Seal server</button>
+      </div>
     </section>
     <section class="acct-sec">
       <h5>Shortcuts</h5>
       <dl class="kv keys" id="keys"></dl>
     </section>
     <footer class="acct-foot">
-      <button class="btn ghost" id="acct-close" type="button">Close</button>
+      <button class="btn ghost" id="acct-close" type="button">Close tab</button>
       <button class="btn" id="acct-signout" type="button">Sign out</button>
     </footer>
   </div>
-</dialog>
+        </div>
+        <div class="page audit-page" id="page-audit" hidden>
+          <div class="aud-intro"><h3>Audit log</h3><small id="aud-status"></small></div>
+          <div id="aud-warn"></div>
+          <div class="aud-filters" id="aud-filters"></div>
+          <div class="aud-scroll"><div class="aud-table" id="aud-table" role="table" aria-label="Audit events"></div></div>
+          <div class="aud-foot" id="aud-foot"></div>
+        </div>
+        <button class="solo-chip" id="solo-chip" type="button" hidden></button>
+        <div class="dropzone" id="dropzone" hidden><span id="drop-label"></span></div>
+        <div class="empty" id="empty">
+          <span class="logo big">&gt;_</span>
+          <p>Pick a host from the sidebar to open a terminal.</p>
+        </div>
+      </div>
+      <aside class="drawer" id="drawer" aria-label="Session details">
+        <div class="drawer-body">
+          <div class="drawer-head"><h5>Session</h5></div>
+          <dl class="kv" id="kv"></dl>
+          <div class="drawer-head"><h5>Sign-ins</h5></div>
+          <div class="acts" id="signins"></div>
+          <div class="drawer-foot">
+            <button class="btn ghost" id="signout-others" type="button" hidden>Sign out others</button>
+            <button class="btn ghost" id="close-session" type="button" hidden>Close session</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <div class="notice" id="notice" role="alert" hidden></div>
+  </div>
+</section>
+
 
 <div class="scrim" id="signout-scrim" hidden>
   <div class="modal" id="signout-dialog" role="alertdialog" aria-modal="true" aria-labelledby="signout-title" aria-describedby="signout-text">
@@ -87,6 +158,38 @@
     </div>
   </div>
 </div>
+<div class="scrim" id="seal-scrim" hidden>
+  <div class="modal" id="seal-dialog" role="alertdialog" aria-modal="true" aria-labelledby="seal-title" aria-describedby="seal-text">
+    <h3 id="seal-title">Seal Shellport?</h3>
+    <p id="seal-text">Every session signs out and every open terminal disconnects. Nobody can sign in until the passphrase is entered again.</p>
+    <div class="modal-foot">
+      <button class="btn ghost" id="seal-cancel" type="button">Cancel</button>
+      <button class="btn" id="seal-confirm" type="button">Seal server</button>
+    </div>
+  </div>
+</div>
+<div class="scrim" id="host-scrim" hidden></div>
+<div class="scrim" id="pk-scrim" hidden></div>
+<section class="lock" id="lock" role="dialog" aria-modal="true" aria-labelledby="lock-title" hidden>
+  <div class="lock-col">
+    <span class="logo big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+    <h1 id="lock-title">Shellport is locked</h1>
+    <p class="lock-error" id="lock-error" role="alert" hidden></p>
+    <div class="lock-box">
+      <p class="lock-sub" id="lock-sub"></p>
+      <button type="button" class="btn lock-pk" id="lock-pk" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8m-3 3 3 3m-6-1 2 2"/></svg><span id="lock-pk-label">Unlock with a passkey</span></button>
+      <div class="lock-or" id="lock-or" hidden>or</div>
+      <form id="lock-form" autocomplete="off">
+        <label class="lock-sub" for="lock-code">Enter the 6-digit code from your authenticator app.</label>
+        <input id="lock-code" name="totp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" placeholder="123456">
+        <button class="btn" type="submit">Unlock</button>
+      </form>
+    </div>
+    <div class="lock-sess" id="lock-sess"><h5>Still connected</h5><ul id="lock-list"></ul></div>
+    <p class="lock-note">Locking hides the screen and blocks input in this browser. Output keeps arriving in the background and is not wiped, so this is a screen lock, not a security boundary. Five wrong codes sign you out.</p>
+    <p class="lock-note"><a href="/" id="lock-signout">Sign out instead</a></p>
+  </div>
+</section>
 <script src="/assets/app.js"></script>
 </body>
 </html>
