@@ -153,17 +153,6 @@ function trustProxyOption(value: unknown): boolean | number {
 
 const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 
-export function loadConfig(file: string): LoadedConfig {
-  const baseDir = path.dirname(path.resolve(file));
-  let raw: any;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (e) {
-    fail(`cannot read ${file}: ${(e as Error).message}`);
-  }
-  return validateConfig(raw, baseDir);
-}
-
 function findReference(node: unknown, where: string): string | undefined {
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {

@@ -59,8 +59,6 @@ let hostsState: SetupHost[] = [
   },
 ];
 
-let targetConfigPath = "config.json";
-let isWritable = false;
 let setupCode = "";
 
 async function setupFetch(url: string, init: RequestInit = {}): Promise<Response> {
@@ -664,23 +662,20 @@ async function initSetup(): Promise<void> {
     const res = await unlockSetup();
     if (res.ok) {
       const data = await res.json();
-      targetConfigPath = data.vaultPath || "vault.sealed";
+      const vaultPath = data.vaultPath || "vault.sealed";
 
       const targetPathEl = document.getElementById("target-path");
-      if (targetPathEl) targetPathEl.textContent = targetConfigPath;
+      if (targetPathEl) targetPathEl.textContent = vaultPath;
 
       const sealPath = document.getElementById("seal-path");
       if (sealPath && data.vaultPath) sealPath.textContent = data.vaultPath;
-      isWritable = Boolean(data.vaultWritable);
+      const isWritable = Boolean(data.vaultWritable);
       if (!isWritable) {
         const hint = document.createElement("p");
         hint.className = "hint";
         hint.textContent = `The vault cannot be written at ${data.vaultPath || "the vault path"}. Mount a writable vault folder to finish setup.`;
         document.querySelector(".seal-opt")?.appendChild(hint);
       }
-
-      const notePath = document.getElementById("note-path");
-      if (notePath) notePath.textContent = targetConfigPath;
 
       const saveBtn = document.getElementById("btn-save") as HTMLButtonElement | null;
       if (saveBtn && !isWritable) {

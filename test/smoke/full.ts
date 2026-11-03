@@ -1435,8 +1435,6 @@ test(`UI: first-run setup stores ${auth} credentials in the vault without persis
   const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
-  const passwordEnv = "SHELLPORT_SETUP_UI_TEST_PASSWORD";
-  process.env[passwordEnv] = "synthetic-only";
   try {
     await new Promise<void>(r => setup.server.listen(0, "127.0.0.1", r));
     const url = `http://127.0.0.1:${(setup.server.address() as AddressInfo).port}`;
@@ -1481,7 +1479,6 @@ test(`UI: first-run setup stores ${auth} credentials in the vault without persis
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     assert.deepEqual(errors, []);
   } finally {
-    delete process.env[passwordEnv];
     await ctx.close();
     await setup.shutdown();
     assert.equal(path.dirname(dir), path.resolve(os.tmpdir()));

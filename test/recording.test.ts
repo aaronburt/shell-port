@@ -288,7 +288,6 @@ let store: RecordingStore;
 let main: { app: ReturnType<typeof createApp>; base: string };
 // A user's authenticator code can only be used once, so each user signs in once per app and shares the cookie.
 let adminCookie = "";
-let otherCookie = "";
 
 before(async () => {
   await new Promise<void>((r) => sshd.listen(0, "127.0.0.1", () => r()));
@@ -352,7 +351,7 @@ test("a session is recorded as output only, listed for admins, and linked from i
 test("only admins can list, read, download or delete recordings", async () => {
   const { base } = main;
   const id = store.list()[0].id;
-  const other = (otherCookie = await signIn(base, "other"));
+  const other = await signIn(base, "other");
   assert.equal((await api(base, other, "/api/recordings")).status, 403);
   assert.equal((await api(base, other, `/api/recordings/${id}`)).status, 403);
   assert.equal((await api(base, other, `/api/recordings/${id}/download`)).status, 403);

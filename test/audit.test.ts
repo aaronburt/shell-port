@@ -4,9 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { loadConfig } from "../src/server/config.js";
+import { fixtureStore, loadFixture, writeFixture } from "./vault-fixture.js";
 import { createApp } from "../src/server/app.js";
-import { fileStore } from "../src/server/hostadmin.js";
 import { AuditLog, auditCsv, fileSink, type AuditEntry } from "../src/server/auditlog.js";
 import { base32Encode, hotp } from "../src/server/totp.js";
 import { generateEd25519 } from "./keys.js";
@@ -104,7 +103,7 @@ test("CSV export quotes cells and neutralises spreadsheet formulas", () => {
 test("the API records sign-ins and host changes and only admins can read it", async () => {
   const dir = tmp();
   const file = path.join(dir, "config.json");
-  fs.writeFileSync(file, JSON.stringify({
+  writeFixture(file, {
     server: { port: 8080, publicUrl: "http://127.0.0.1:1" },
     github: { clientId: "id", clientSecret: "secret" },
     users: [
@@ -112,8 +111,8 @@ test("the API records sign-ins and host changes and only admins can read it", as
       { github: "member", totpSecret: base32Encode(TOTP_KEY) },
     ],
     hosts: [{ id: "first", name: "first", host: "10.0.0.1", username: "deploy", auth: { type: "key", privateKey: locked.private, keyName: "deploy_ed25519" }, hostKeyFingerprints: [FP] }],
-  }));
-  const cfg = loadConfig(file);
+  });
+  const cfg = loadFixture(file);
   const clock = Date.now();
   let who = "admin";
   const auditLog = new AuditLog({ sink: fileSink(path.join(dir, "audit.log")) });
@@ -121,7 +120,7 @@ test("the API records sign-ins and host changes and only admins can read it", as
     publicDir: path.resolve("dist/public"),
     now: () => clock,
     auditLog,
-    hostStore: fileStore(file),
+    hostStore: fixtureStore(file),
     probeHostKey: async () => FP,
     exchange: async () => ({ id: who === "admin" ? 1 : who === "member" ? 2 : 3, login: who, name: who }),
   });
