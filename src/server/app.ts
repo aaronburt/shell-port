@@ -721,7 +721,13 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       socket.destroy();
     };
     if (stopping) return reject(503, "Service Unavailable");
-    const url = new URL(req.url ?? "/", "http://x");
+    let url: URL;
+    try {
+      if (!req.url?.startsWith("/") || req.url.startsWith("//")) return reject(400, "Bad Request");
+      url = new URL(req.url, "http://x");
+    } catch {
+      return reject(400, "Bad Request");
+    }
     if (url.pathname !== "/ws") return reject(404, "Not Found");
     const ip = clientIp(req.socket.remoteAddress ?? "", String(req.headers["x-forwarded-for"] ?? ""), cfg.server.trustProxy);
     if (!apiLimiter.hit(ip)) return reject(429, "Too Many Requests");

@@ -210,6 +210,7 @@ test("createSetupApp endpoints operate as expected", async () => {
 
   let savedTriggered = false;
   const { server, shutdown } = createSetupApp({
+    token: "unit-setup-code",
     configPath: cfgPath,
     publicDir,
     onSaved: () => {
@@ -227,7 +228,8 @@ test("createSetupApp endpoints operate as expected", async () => {
     const healthBody = await health.json();
     assert.deepEqual(healthBody, { ok: true, setup: true });
 
-    const status = await fetch(`${baseUrl}/api/setup/status`);
+    const headers = { "Content-Type": "application/json", "X-Shellport-Setup-Code": "unit-setup-code", Origin: baseUrl };
+    const status = await fetch(`${baseUrl}/api/setup/status`, { headers });
     assert.equal(status.status, 200);
     const statusBody = await status.json();
     assert.equal(statusBody.exists, false);
@@ -236,7 +238,7 @@ test("createSetupApp endpoints operate as expected", async () => {
 
     const totpRes = await fetch(`${baseUrl}/api/setup/totp`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ account: "tester" }),
     });
     assert.equal(totpRes.status, 200);
@@ -246,7 +248,7 @@ test("createSetupApp endpoints operate as expected", async () => {
 
     const valRes = await fetch(`${baseUrl}/api/setup/validate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ server: { port: 8080 } }),
     });
     assert.equal(valRes.status, 200);
@@ -263,7 +265,7 @@ test("createSetupApp endpoints operate as expected", async () => {
 
     const saveRes = await fetch(`${baseUrl}/api/setup/save`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(validPayload),
     });
     assert.equal(saveRes.status, 200);

@@ -59,6 +59,47 @@ let hostsState: SetupHost[] = [
 
 let targetConfigPath = "config.json";
 let isWritable = false;
+let setupCode = "";
+
+async function setupFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("X-Shellport-Setup-Code", setupCode);
+  const res = await fetch(url, { ...init, headers, credentials: "same-origin" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error || `Setup request failed (${res.status}).`);
+  }
+  return res;
+}
+
+function unlockSetup(): Promise<Response> {
+  return new Promise((resolve) => {
+    const form = document.getElementById("setup-unlock-form") as HTMLFormElement;
+    const code = document.getElementById("setup-code") as HTMLInputElement;
+    const button = document.getElementById("setup-unlock-button") as HTMLButtonElement;
+    const error = document.getElementById("setup-unlock-error")!;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (button.disabled) return;
+      setupCode = code.value.trim();
+      error.hidden = true;
+      button.disabled = true;
+      try {
+        const status = await setupFetch("/api/setup/status");
+        code.value = "";
+        document.getElementById("setup-unlock")!.hidden = true;
+        document.getElementById("setup-workspace")!.hidden = false;
+        resolve(status);
+      } catch (err) {
+        setupCode = "";
+        error.textContent = (err as Error).message;
+        error.hidden = false;
+        code.select();
+        button.disabled = false;
+      }
+    });
+  });
+}
 
 function escapeHtml(s: string): string {
   const div = document.createElement("div");
@@ -178,7 +219,7 @@ function attachUserEvents(): void {
       btn.textContent = "Generating...";
       btn.disabled = true;
       try {
-        const res = await fetch("/api/setup/totp", {
+        const res = await setupFetch("/api/setup/totp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ account: user.github || "user" }),
@@ -466,7 +507,7 @@ async function validateConfig(): Promise<boolean> {
 
   const cfg = buildConfigObject();
   try {
-    const res = await fetch("/api/setup/validate", {
+    const res = await setupFetch("/api/setup/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),
@@ -549,7 +590,7 @@ async function saveConfig(): Promise<void> {
     return;
   }
   try {
-    const res = await fetch("/api/setup/save", {
+    const res = await setupFetch("/api/setup/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sealOn ? { config: cfg, passphrase: pass } : cfg),
@@ -604,7 +645,7 @@ async function initSetup(): Promise<void> {
   });
 
   try {
-    const res = await fetch("/api/setup/status");
+    const res = await unlockSetup();
     if (res.ok) {
       const data = await res.json();
       targetConfigPath = data.configPath || "config.json";

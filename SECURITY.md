@@ -45,6 +45,8 @@ What it does not defend against:
 
 ## Sealed mode
 
+First-run setup requires a random 256-bit code printed in the server log. All setup APIs require this code over HTTPS or localhost, writes require the same Origin, and a successful save consumes the code. The code is kept in browser memory only. Protect access to server logs, and set `SHELLPORT_TRUST_PROXY` appropriately when setup runs behind an HTTPS proxy.
+
 An optional vault (`vault.sealed`) replaces `config.json` and `.env`. See the README for how to use it.
 
 - **Format.** The passphrase goes through scrypt (N=2^17, r=8, p=1) to a key that wraps a random 256-bit data key with AES-256-GCM, and the data key encrypts the config with AES-256-GCM. The header (version and KDF settings) is authenticated, so changed settings are detected. Changing the passphrase re-wraps the data key without re-encrypting the contents. The KDF name is stored in the header so Argon2id can be added later.

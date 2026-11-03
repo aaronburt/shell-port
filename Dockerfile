@@ -7,7 +7,7 @@ ARG APP_VERSION
 RUN if [ -n "$APP_VERSION" ]; then npm pkg set version="${APP_VERSION}.0"; fi && npm run build && npm prune --omit=dev
 
 FROM node:26-alpine
-ENV NODE_ENV=production SHELLPORT_CONFIG=/config/config.json
+ENV NODE_ENV=production HOST=0.0.0.0 SHELLPORT_CONFIG=/config/config.json
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
