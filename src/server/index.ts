@@ -12,6 +12,7 @@ import { createMigrateApp } from "./migrate.js";
 import crypto from "node:crypto";
 import { audit } from "./log.js";
 import { AuditLog, fileSink } from "./auditlog.js";
+import { RecordingStore } from "./recording.js";
 
 const configPath = process.env.SHELLPORT_CONFIG ?? "config.json";
 const vaultPath = process.env.SHELLPORT_VAULT ?? "vault.sealed";
@@ -31,8 +32,24 @@ function openAuditLog(cfg: LoadedConfig, vault?: string, dek?: Buffer): AuditLog
   }
 }
 
+function openRecordings(cfg: LoadedConfig, vault?: string, dek?: Buffer): RecordingStore | undefined {
+  if (!cfg.recording.enabled) return undefined;
+  const dir = process.env.SHELLPORT_RECORDINGS ?? path.join(path.dirname(path.resolve(vault ?? configPath)), "recordings");
+  const onError = (message: string) => audit("server.warning", { message: `session recording: ${message}` });
+  const base = { dir, retentionDays: cfg.recording.retentionDays, maxBytes: cfg.recording.maxMB * 1024 * 1024, onError };
+  // Recordings are only written when they can be encrypted in sealed mode. Otherwise sessions refuse to open.
+  if (vault && !dek) return new RecordingStore({ ...base, unavailable: "the server has no key to encrypt recordings" });
+  try {
+    return new RecordingStore({ ...base, key: vault ? dek : undefined });
+  } catch (e) {
+    onError((e as Error).message);
+    return new RecordingStore({ ...base, unavailable: (e as Error).message });
+  }
+}
+
 function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = false) {
   const auditLog = openAuditLog(cfg, vault, dek);
+  const recordings = openRecordings(cfg, vault, dek);
   if (unsealed) auditLog.add({ kind: "vault_unsealed", user: "", ip: "", detail: "Passphrase accepted on the unseal page" });
   const hostStore: HostStore | undefined = vault ? (dek ? vaultStore(vault, dek) : undefined) : fileStore(configPath);
   const signals = ["SIGINT", "SIGTERM"] as const;
@@ -42,13 +59,14 @@ function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = fa
     publicDir,
     auditLog,
     hostStore,
+    recordings,
     passkeyStore: vault ? (dek ? passkeyStore("vault", vaultIo(vault, dek)) : undefined) : passkeyStore("file", fileIo(configPath)),
     onSeal: vault
       ? () => {
           if (sealing) return;
           sealing = true;
           for (const sig of signals) process.off(sig, onSignal);
-          shutdown(5000, "seal").then(() => { auditLog.stop(); dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
+          shutdown(5000, "seal").then(() => { recordings?.stop(); auditLog.stop(); dek?.fill(0); startSealed(vault, { port: cfg.server.port, host: cfg.server.host }); });
         }
       : undefined,
   });

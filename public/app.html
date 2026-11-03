@@ -144,10 +144,33 @@
         </div>
         <div class="page audit-page" id="page-audit" hidden>
           <div class="aud-intro"><h3>Audit log</h3><small id="aud-status"></small></div>
+          <div class="aud-views" id="aud-views">
+            <div class="seg" role="group" aria-label="Show">
+              <button type="button" data-view="events" aria-pressed="true">Events</button>
+              <button type="button" data-view="recordings" aria-pressed="false">Recordings</button>
+            </div>
+          </div>
           <div id="aud-warn"></div>
           <div class="aud-filters" id="aud-filters"></div>
           <div class="aud-scroll"><div class="aud-table" id="aud-table" role="table" aria-label="Audit events"></div></div>
           <div class="aud-foot" id="aud-foot"></div>
+        </div>
+        <div class="page rec-page" id="page-recording" hidden>
+          <div class="aud-intro rec-intro">
+            <div><h3 id="rec-title">Recording</h3><small id="rec-meta"></small></div>
+            <div class="rec-actions">
+              <a class="btn ghost" id="rec-download" href="#" download>Download .cast</a>
+              <button class="btn ghost danger" id="rec-delete" type="button">Delete</button>
+            </div>
+          </div>
+          <p class="rec-note" id="rec-note" role="status"></p>
+          <div class="rec-stage"><div class="rec-screen" id="rec-screen"></div></div>
+          <div class="rec-bar">
+            <button class="btn ghost" id="rec-play" type="button">Play</button>
+            <input id="rec-seek" type="range" min="0" max="1000" value="0" aria-label="Position in recording">
+            <span class="mono rec-time" id="rec-time">0:00 / 0:00</span>
+            <select id="rec-speed" aria-label="Playback speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+          </div>
         </div>
         <button class="solo-chip" id="solo-chip" type="button" hidden></button>
         <div class="dropzone" id="dropzone" hidden><span id="drop-label"></span></div>

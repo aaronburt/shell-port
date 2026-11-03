@@ -20,6 +20,7 @@
     "maxDownloadMB": 256,
     "auditRetentionDays": 90
   },
+  "recording": { "enabled": true, "retentionDays": 90, "maxMB": 100 },
   "security": { "allowUnpinnedHostKeys": false },
   "hosts": [
     {

@@ -39,9 +39,13 @@ Design notes (choices that look odd but are deliberate):
 What it does not defend against:
 
 - Anyone who can read the server's files or environment, since TOTP secrets and host credentials are stored there in plaintext. Sealed mode removes this for files at rest; see below.
-- A user who has passed both factors: there is no per-command control or session recording. The file explorer can read and delete anything the configured SSH account can, exactly like the terminal can; Shellport adds no path jail beyond that account's permissions.
+- A user who has passed both factors: there is no per-command control. Sessions are recorded for admins (terminal output only, see the README's Session recordings), but not blocked or filtered. The file explorer can read and delete anything the configured SSH account can, exactly like the terminal can; Shellport adds no path jail beyond that account's permissions.
 - Running over plain HTTP on an untrusted network. Use HTTPS, and preferably put the service behind a VPN or an identity-aware proxy.
 - Multiple instances: sessions are in memory and per-IP rate limits are not shared.
+
+## Session recordings
+
+Session recordings are admin-only and hold terminal output, not keystrokes. Each line is encrypted with a key derived from the vault key while the server is sealed, and nothing is recorded while sealed. Recordings are written before their output is sent to the browser, so a failed write closes the session rather than leaving a gap. Access, downloads and deletes are audited. Recordings can contain secrets that commands print, so limit who is an admin and how long recordings are kept (`recording.retentionDays`).
 
 ## Sealed mode
 

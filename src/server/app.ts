@@ -16,6 +16,7 @@ import { audit } from "./log.js";
 import { ActivityLog, sidTag } from "./activity.js";
 import { AuditLog, AUDIT_GROUPS, AUDIT_KINDS, auditCsv, type AuditKind } from "./auditlog.js";
 import * as files from "./sftp.js";
+import type { RecordingStore } from "./recording.js";
 import { BUILD_VERSION, releaseNotesUrl } from "./version.js";
 
 const PERMISSIONS_POLICY = [
@@ -39,6 +40,7 @@ export interface AppOptions {
   probeHostKey?: KeyProbe;
   passkeyStore?: PasskeyStore;
   auditLog?: AuditLog;
+  recordings?: RecordingStore;
 }
 
 export function createApp(cfg: LoadedConfig, opts: AppOptions) {
@@ -540,15 +542,63 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.json({ items, total, ...auditLog.choices(), groups: AUDIT_GROUPS, kinds: AUDIT_KINDS, status: auditLog.status() });
   });
 
-  app.get("/api/audit/export", requireSession, requireAdmin, (req, res) => {
+  // Browser downloads and exports are navigations; refuse ones started from another site.
+  const sameSiteDownload = (req: Request) => {
     const fetchSite = req.headers["sec-fetch-site"];
-    if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") return res.status(403).json({ error: "bad_origin" });
+    return fetchSite === undefined || fetchSite === "same-origin" || fetchSite === "none";
+  };
+
+  app.get("/api/audit/export", requireSession, requireAdmin, (req, res) => {
+    if (!sameSiteDownload(req)) return res.status(403).json({ error: "bad_origin" });
     const s: UserSession = res.locals.session;
     const entries = auditLog.all(auditFilter(req));
     audit("audit.export", { ip: ipOf(req), user: s.login, rows: entries.length });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="shellport-audit.csv"');
     res.send(auditCsv(entries));
+  });
+
+  app.get("/api/recordings", requireSession, requireAdmin, (_req, res) => {
+    const store = opts.recordings;
+    res.json({
+      items: store?.list() ?? [],
+      status: store?.status() ?? { available: false, error: "Session recording is turned off (recording.enabled is false in config)", encrypted: false, retentionDays: cfg.recording.retentionDays, maxMB: cfg.recording.maxMB },
+    });
+  });
+
+  app.get("/api/recordings/:id", requireSession, requireAdmin, (req, res) => {
+    const s: UserSession = res.locals.session;
+    const meta = opts.recordings?.get(String(req.params.id));
+    if (!opts.recordings || !meta) return res.status(404).json({ error: "not_found" });
+    const { text, unreadable } = opts.recordings.read(meta.id);
+    rec("recording_viewed", req, s.login, { host: meta.host, detail: `Session by ${meta.user}` });
+    res.type("text/plain; charset=utf-8");
+    if (unreadable) res.setHeader("X-Unreadable-Lines", String(unreadable));
+    res.send(text);
+  });
+
+  app.get("/api/recordings/:id/download", requireSession, requireAdmin, (req, res) => {
+    if (!sameSiteDownload(req)) return res.status(403).json({ error: "bad_origin" });
+    const s: UserSession = res.locals.session;
+    const meta = opts.recordings?.get(String(req.params.id));
+    if (!opts.recordings || !meta) return res.status(404).json({ error: "not_found" });
+    const { text } = opts.recordings.read(meta.id);
+    rec("recording_downloaded", req, s.login, { host: meta.host, detail: `Session by ${meta.user}` });
+    const when = new Date(meta.startedAt).toISOString().replace(/[:.]/g, "-");
+    res.setHeader("Content-Type", "application/x-asciicast; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="shellport-${meta.hostId}-${when}.cast"`);
+    res.send(text);
+  });
+
+  app.delete("/api/recordings/:id", requireSession, requireAdmin, requireSameOrigin, (req, res) => {
+    const s: UserSession = res.locals.session;
+    const store = opts.recordings;
+    const meta = store?.get(String(req.params.id));
+    if (!store || !meta) return res.status(404).json({ error: "not_found" });
+    if (meta.status === "recording") return res.status(409).json({ error: "recording_live" });
+    store.remove(meta.id);
+    rec("recording_deleted", req, s.login, { host: meta.host, detail: `Session by ${meta.user}` });
+    res.json({ deleted: meta.id });
   });
 
   app.get("/api/keys", requireSession, requireAdmin, (_req, res) => {
@@ -750,7 +800,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
       const bySess = terminalsBySession.get(s.id) ?? new Set<TerminalInfo>();
       terminalsBySession.set(s.id, bySess);
       const t = openTerminal({
-        ws, cfg, host, route, session: s, activity, auditLog, passphraseLimiter, ip, timing: opts.timing,
+        ws, cfg, host, route, session: s, activity, auditLog, passphraseLimiter, recordings: opts.recordings, ip, timing: opts.timing,
         cols: url.searchParams.get("cols"),
         rows: url.searchParams.get("rows"),
         onClose: () => {

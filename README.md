@@ -139,6 +139,7 @@ Shellport reads `config.json`. Start from [`config.example.json`](config.example
 | `users` | Who may sign in, by numeric GitHub ID or login, each with a `totpSecret`. Set `"admin": true` on a user to let them add hosts from the browser. A `passkeys` list is written by Shellport when a user adds a passkey under Account; do not edit it by hand. |
 | `hosts` | Preconfigured SSH destinations: address, user, credentials, pinned `hostKeyFingerprints`, optional `allowedUsers`, and `files` (set it to `false` to turn off the file explorer for that host; it is on by default). |
 | `limits` | Terminals per user, idle timeout, sign-in attempts per 15 minutes, `maxDownloadMB` (largest file the explorer will download, default 256), and `auditRetentionDays` (how long the audit log is kept, default 90). |
+| `recording` | Session recordings: `enabled` (default `true`), `retentionDays` (default 90) and `maxMB` (largest recording per session, default 100). See [Session recordings](#session-recordings). |
 | `session` | How long a sign-in lasts (`ttlHours`). |
 | `security` | Security options. Leave `allowUnpinnedHostKeys` at `false`. |
 
@@ -246,11 +247,25 @@ For each user-facing change, add a new Markdown file under [`release-notes/`](re
 
 ## Audit log
 
-Admins get an **Audit log** tab (Account → Audit log). It records sign-ins and failures, SSH connects and disconnects per user and host, host and key changes, passkeys added or removed, failed screen-lock unlocks, and the server being sealed or unsealed. Passwords, passphrases, keys and terminal content are never recorded. Failed attempts on the sealed-mode unseal page are not recorded.
+Admins get an **Audit log** tab (Account → Audit log). It records sign-ins and failures, SSH connects and disconnects per user and host, host and key changes, passkeys added or removed, failed screen-lock unlocks, the server being sealed or unsealed, and every view, download or delete of a session recording. Passwords, passphrases and keys are never recorded. Failed attempts on the sealed-mode unseal page are not recorded. Session recordings are kept separately; see below.
 
 The tab filters by user, host, event type and period, and **Export CSV** downloads everything the filters match.
 
 Events are appended to a JSONL file, `audit.log`, next to the vault (or the config file). Set `SHELLPORT_AUDIT` to use another path. While the server is sealed, every line is encrypted with a key derived from the vault key. Entries older than `limits.auditRetentionDays` (default 90) are removed. If the file cannot be written, for example when `/config` is mounted read-only, events stay in memory only and the tab warns you.
+
+## Session recordings
+
+Each SSH session that a user opens in the browser is recorded to a file. The recording keeps the **terminal output**, the text the remote shell and its programs print, and any change to the window size. It does **not** keep keystrokes, so a password typed at a hidden prompt is never captured. Anything a command prints is kept, including secrets such as tokens shown by `cat`, so treat recordings like the output they hold.
+
+- **Who sees them.** Only admins. Account → Audit log has a **Recordings** view that lists every recording with its host, user, length and size. **Play** opens a playback tab with pause, seek and 1×–8× speed. **Download .cast** saves the file in asciicast v2 format, which the [asciinema](https://asciinema.org) player can also play. **Delete** removes a finished recording. Every view, download and delete is written to the audit log.
+- **Connect events link to their recording.** A connect row in the Events view has a **Play recording** link.
+- **Visible to the user.** A session that is being recorded shows a red **REC** badge on its tab. Recording is on by default, so tell your users.
+- **Where it is stored.** One `.cast` file per session, in `recordings/<host id>/`, next to the vault (or next to `config.json` when the vault is not used). Set `SHELLPORT_RECORDINGS` to use another folder. Each recording also has a small `.json` file with its details.
+- **Encrypted while sealed.** When the server is sealed, every line of every recording is encrypted with a key derived from the vault key. Recordings cannot be played while the server is sealed, and nothing is recorded until it is unsealed.
+- **Retention and size.** Recordings older than `recording.retentionDays` (default 90) are deleted. A session that reaches `recording.maxMB` (default 100) is closed, and its recording is marked as stopped early.
+- **Fails closed.** If a recording cannot start, the session does not open. If output cannot be written to the file, the session is closed before that output reaches the browser, so the recording never has gaps.
+- **Server restarts.** A session still running when the server stops is marked **Interrupted**, and its recording ends where the server stopped.
+- **Turning it off.** Set `"recording": { "enabled": false }` in `config.json`. New sessions then open without a recording, and existing recordings stay until they expire.
 
 ## Security
 

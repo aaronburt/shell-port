@@ -9,6 +9,7 @@ import { audit } from "./log.js";
 import type { ActivityLog } from "./activity.js";
 import type { AuditLog } from "./auditlog.js";
 import { FileError } from "./sftp.js";
+import { RecordingError, type LiveRecording, type RecordingStore } from "./recording.js";
 
 const HIGH_WATER = 1 << 20;
 const PASSPHRASE_TRIES = 3;
@@ -71,6 +72,7 @@ export function openTerminal(opts: {
   activity: ActivityLog;
   auditLog: AuditLog;
   passphraseLimiter: RateLimiter;
+  recordings?: RecordingStore;
   ip: string;
   timing?: TerminalTiming;
   cols: unknown;
@@ -94,6 +96,8 @@ export function openTerminal(opts: {
   let connectStart = 0;
   let bastionUp = false;
   let opened = false;
+  let recording: LiveRecording | undefined;
+  let recordingError: string | undefined;
   const phases: Record<string, number> = {};
   const mark = (name: string) => { phases[name] = Date.now() - connectStart; };
 
@@ -122,8 +126,25 @@ export function openTerminal(opts: {
   const ssh = new Client();
   const bastion = route ? new Client() : undefined;
   const auditFor = (h: HostConfig) => ({ user: session.login, host: h.id, ip });
-  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string, h: HostConfig = host) =>
-    opts.auditLog.add({ kind, user: session.login, ip, host: h.name, detail });
+  const trail = (kind: Parameters<AuditLog["add"]>[0]["kind"], detail: string, h: HostConfig = host, ref?: string) =>
+    opts.auditLog.add({ kind, user: session.login, ip, host: h.name, detail, ref });
+
+  // Stops the session because its recording could not be written. The chunk that failed is never forwarded.
+  const recordingFailed = (e: unknown) => {
+    if (closed) return;
+    const limit = e instanceof RecordingError && e.code === "limit";
+    const detail = (e as Error).message ?? String(e);
+    recordingError = detail;
+    audit("terminal.recording_failed", { ...auditFor(host), error: detail });
+    trail("recording_failed", limit ? "Recording reached its size limit, session closed" : "Recording could not be saved, session closed");
+    send({
+      t: "error",
+      message: limit
+        ? "This session reached its recording size limit, so it was closed."
+        : "Session recording failed, so the session was closed to keep the record complete.",
+    });
+    close("Recording stopped");
+  };
 
   const close = (reason: string) => {
     if (closed) return;
@@ -139,6 +160,7 @@ export function openTerminal(opts: {
     audit("terminal.close", { ...auditFor(host), reason, seconds: Math.round((Date.now() - started) / 1000), bytesIn, bytesOut });
     if (opened) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`);
     if (route && bastionUp) trail("ssh_disconnect", `${reason}. Lasted ${formatDuration(Date.now() - started)}`, route);
+    recording?.finish(recordingError ? "failed" : "complete", recordingError ?? reason);
     opts.onClose();
   };
 
@@ -187,9 +209,20 @@ export function openTerminal(opts: {
       }
       stream = s;
       mark("shellMs");
+      // Start the recording before any output reaches the browser. If it cannot start, the session does not open.
+      if (opts.recordings) {
+        try {
+          recording = opts.recordings.start({ hostId: host.id, host: host.name, user: session.login, ip, cols: size.cols, rows: size.rows });
+        } catch (e) {
+          audit("terminal.recording_failed", { ...auditFor(host), error: (e as Error).message });
+          trail("recording_failed", "Recording could not start, session not opened");
+          send({ t: "error", message: "Session recording is unavailable, so the session was not opened." });
+          return close("Recording unavailable");
+        }
+      }
       audit("terminal.open", { ...auditFor(host), ...phases, ...(route ? { via: route.id } : {}) });
       opened = true;
-      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (targetHop.auth.needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}${route ? `, through ${route.name}` : ""}`);
+      trail("ssh_connect", `As ${host.username}, ${host.auth.type === "key" ? (targetHop.auth.needsPassphrase ? "key with a passphrase typed in the browser" : "server-managed key") : "server-managed password"}${route ? `, through ${route.name}` : ""}`, host, recording?.id);
       send({
         t: "status",
         state: "connected",
@@ -205,10 +238,19 @@ export function openTerminal(opts: {
           cipher,
           hostKey: host.hostKeyFingerprints?.length ? "pinned" : "not pinned",
           since: new Date().toISOString(),
+          recording: !!recording,
         },
       });
       const onData = (d: Buffer) => {
+        if (closed) return;
         lastActivity = Date.now();
+        if (recording) {
+          try {
+            recording.output(d);
+          } catch (e) {
+            return recordingFailed(e);
+          }
+        }
         bytesOut += d.length;
         if (ws.readyState !== ws.OPEN) return;
         ws.send(d);
@@ -281,6 +323,11 @@ export function openTerminal(opts: {
     if (msg?.t === "resize") {
       size = { cols: clampDim(msg.cols, size.cols, 500), rows: clampDim(msg.rows, size.rows, 200) };
       stream?.setWindow(size.rows, size.cols, 0, 0);
+      try {
+        recording?.resize(size.cols, size.rows);
+      } catch (e) {
+        recordingFailed(e);
+      }
     }
   });
   ws.on("close", () => close("Browser disconnected"));

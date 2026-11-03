@@ -20,6 +20,10 @@ export const AUDIT_KINDS = {
   unlock_failed: { group: "Screen lock", label: "Unlock failed", bad: true },
   vault_sealed: { group: "Server", label: "Server sealed" },
   vault_unsealed: { group: "Server", label: "Server unsealed" },
+  recording_viewed: { group: "Recordings", label: "Recording viewed" },
+  recording_downloaded: { group: "Recordings", label: "Recording downloaded" },
+  recording_deleted: { group: "Recordings", label: "Recording deleted" },
+  recording_failed: { group: "Recordings", label: "Recording failed, session closed", bad: true },
 } as const satisfies Record<string, { group: string; label: string; bad?: true }>;
 
 export type AuditKind = keyof typeof AUDIT_KINDS;
@@ -34,6 +38,8 @@ export interface AuditEntry {
   ip: string;
   host: string;
   detail: string;
+  /** Links an entry to a session recording by its id, when there is one. */
+  ref?: string;
 }
 
 export interface AuditSink {
@@ -56,7 +62,8 @@ function isEntry(v: unknown): v is AuditEntry {
   if (!v || typeof v !== "object") return false;
   const e = v as Record<string, unknown>;
   return typeof e.id === "string" && typeof e.at === "number" && typeof e.kind === "string" && e.kind in AUDIT_KINDS &&
-    typeof e.user === "string" && typeof e.ip === "string" && typeof e.host === "string" && typeof e.detail === "string";
+    typeof e.user === "string" && typeof e.ip === "string" && typeof e.host === "string" && typeof e.detail === "string" &&
+    (e.ref === undefined || typeof e.ref === "string");
 }
 
 export function fileSink(file: string, dek?: Buffer): AuditSink {
@@ -177,7 +184,7 @@ export class AuditLog {
     this.error = message;
   }
 
-  add(e: Omit<AuditEntry, "id" | "at" | "host" | "detail"> & { at?: number; host?: string; detail?: string }) {
+  add(e: Omit<AuditEntry, "id" | "at" | "host" | "detail" | "ref"> & { at?: number; host?: string; detail?: string; ref?: string }) {
     const entry: AuditEntry = {
       id: crypto.randomBytes(6).toString("hex"),
       at: e.at ?? this.now(),
@@ -186,6 +193,7 @@ export class AuditLog {
       ip: e.ip.slice(0, 64),
       host: (e.host ?? "").slice(0, 120),
       detail: (e.detail ?? "").replace(/[\r\n]+/g, " ").slice(0, 300),
+      ...(e.ref ? { ref: e.ref.slice(0, 64) } : {}),
     };
     this.entries.push(entry);
     if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);

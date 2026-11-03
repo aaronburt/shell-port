@@ -8,6 +8,7 @@ import { initAddHost } from "./addhost.js";
 import { initPasskeys } from "./passkeys.js";
 import { initLock } from "./lock.js";
 import { initAudit } from "./audit.js";
+import { initRecordingPage, type RecordingMeta } from "./playback.js";
 import { initAccountHelp } from "./account-help.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
@@ -18,7 +19,7 @@ interface Signin {
   method?: "github" | "passkey"; session?: string; current?: boolean; active?: boolean; expiresAt?: number;
 }
 type State = "connecting" | "connected" | "closed";
-interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; route?: string; cipher: string; hostKey: string; since: string }
+interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; route?: string; cipher: string; hostKey: string; since: string; recording?: boolean }
 
 interface Pane {
   id: string;
@@ -75,7 +76,7 @@ let hosts: Host[] = [];
 let canEdit = false;
 let tabs: Tab[] = [];
 let active: Tab | undefined;
-type PageKind = "audit" | "account";
+type PageKind = "audit" | "account" | "recording";
 interface Page { kind: PageKind; title: string; el: HTMLElement }
 const pages: Page[] = [];
 let activePage: Page | undefined;
@@ -268,6 +269,7 @@ $("drawer-toggle").onclick = () => { toggleDrawer(); shown()?.focus.term.focus()
 const X_ICON = `<svg class="x-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
 const FOLDER_ICON = `<svg class="f-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>`;
 const PAGE_ICONS: Record<PageKind, string> = {
+  recording: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.8" fill="currentColor"/></svg>`,
   audit: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 4h14M5 9h14M5 14h14M5 19h9"/></svg>`,
   account: `<svg class="tab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
 };
@@ -280,7 +282,7 @@ function renderTabs() {
     : `<span class="tab-files tab-x" role="button" tabindex="0" data-tabclose="${t.key}" aria-label="Close ${esc(t.title)}" title="Close tab (hold Shift)">${X_ICON}</span>`;
   el.innerHTML = tabs.map((t) => `
     <button role="tab" aria-selected="${front(t)}" class="tab ${front(t) ? "active" : ""}" draggable="true" data-tab="${t.key}" data-state="${tabState(t)}" title="${esc(t.host.addr)}">
-      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${closer(t)}
+      <span class="dot ${tabState(t) === "connected" ? "" : tabState(t)}"></span><span class="name">${esc(t.title)}</span>${t.focus.info?.recording ? `<span class="rec-badge" title="This session is recorded (terminal output only)">REC</span>` : ""}${panesOf(t).length > 1 ? `<span class="tab-n" title="Sessions in this view">${panesOf(t).length}</span>` : ""}${closer(t)}
     </button>`).join("") + pages.map((p) => `
     <button role="tab" aria-selected="${p === activePage}" class="tab ptab ${p === activePage ? "active" : ""}" data-page="${p.kind}" title="${p.title}">
       ${PAGE_ICONS[p.kind]}<span class="name">${p.title}</span><span class="tab-files tab-x" role="button" tabindex="0" data-pageclose="${p.kind}" aria-label="Close ${p.title}" title="Close tab (hold Shift)">${X_ICON}</span>
@@ -1104,12 +1106,14 @@ function renderDrawer() {
   const tab = active;
   const row = (k: string, v: string) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
   if (activePage) {
-    const audit = activePage.kind === "audit";
+    const kind = activePage.kind;
     $("close-session").hidden = false;
-    $("close-session").textContent = audit ? "Close audit log" : "Close account";
-    $("kv").innerHTML = audit
+    $("close-session").textContent = kind === "audit" ? "Close audit log" : kind === "recording" ? "Close recording" : "Close account";
+    $("kv").innerHTML = kind === "audit"
       ? row("View", "Audit log") + row("Access", "Admins only")
-      : row("View", "Account") + row("User", scope) + row("Signed in", $("acct-via").textContent ?? "");
+      : kind === "recording"
+        ? row("View", "Recording") + row("Access", "Admins only") + row("Captured", "Terminal output only")
+        : row("View", "Account") + row("User", scope) + row("Signed in", $("acct-via").textContent ?? "");
     if (signinsKey !== "page") { signinsKey = "page"; loadSignins(); }
     return;
   }
@@ -1265,7 +1269,16 @@ $("zoom-reset").onclick = () => setZoom(100);
 
 addrToggle.onclick = () => setHideAddr(addrToggle.getAttribute("aria-checked") !== "true");
 
-const auditView = initAudit($("page-audit"));
+const auditView = initAudit($("page-audit"), { play: (id) => void openRecording(id) });
+const recordingView = initRecordingPage($("page-recording"), {
+  theme: () => TERM_THEMES[termTheme],
+  deleted: () => {
+    const p = pages.find((x) => x.kind === "recording");
+    if (p) closePage(p);
+    void auditView.refresh();
+    notify("Recording deleted.");
+  },
+});
 
 function openPage(kind: PageKind) {
   let p = pages.find((x) => x.kind === kind);
@@ -1285,10 +1298,29 @@ function closePage(p: Page) {
   if (i < 0) return;
   pages.splice(i, 1);
   p.el.hidden = true;
+  if (p.kind === "recording") recordingView.close();
   if (activePage === p) activePage = pages[i] ?? pages[i - 1];
   renderAll();
   applyMode();
   shown()?.focus.term.focus();
+}
+
+async function openRecording(id: string) {
+  const r = await fetch("/api/recordings", { credentials: "same-origin" }).catch(() => undefined);
+  if (!r?.ok) return notify(`Could not open the recording (${failure(r)}).`);
+  const meta = ((await r.json()) as { items: RecordingMeta[] }).items.find((m) => m.id === id);
+  if (!meta) return notify("That recording has been deleted or has expired.");
+  let p = pages.find((x) => x.kind === "recording");
+  if (!p) {
+    p = { kind: "recording", title: "", el: $("page-recording") };
+    pages.push(p);
+  }
+  p.title = `Recording · ${meta.host}`;
+  $("ws").classList.remove("rail-open");
+  activePage = p;
+  void recordingView.show(meta);
+  renderAll();
+  applyMode();
 }
 
 accountBtn.onclick = () => openPage("account");
