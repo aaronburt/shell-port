@@ -87,12 +87,39 @@ let othersCount = 0;
 let signinsKey = "";
 const openActs = new Set<string>();
 
-const THEME = {
-  background: "#0b0e13", foreground: "#cfd8e3", cursor: "#f0a640", cursorAccent: "#0b0e13",
-  selectionBackground: "#2b3a4d",
-  black: "#1b222c", red: "#ff7b7b", green: "#7fd88f", yellow: "#f0a640", blue: "#7cb7ff", magenta: "#d59cf6", cyan: "#6fd3d3", white: "#cfd8e3",
-  brightBlack: "#6c7a8c", brightRed: "#ff9a9a", brightGreen: "#9be6a8", brightYellow: "#ffc46b", brightBlue: "#a0cbff", brightMagenta: "#e3b8fa", brightCyan: "#93e2e2", brightWhite: "#ffffff",
+const TERM_THEMES = {
+  shellport: {
+    background: "#0b0e13", foreground: "#cfd8e3", cursor: "#f0a640", cursorAccent: "#0b0e13",
+    selectionBackground: "#2b3a4d",
+    black: "#1b222c", red: "#ff7b7b", green: "#7fd88f", yellow: "#f0a640", blue: "#7cb7ff", magenta: "#d59cf6", cyan: "#6fd3d3", white: "#cfd8e3",
+    brightBlack: "#6c7a8c", brightRed: "#ff9a9a", brightGreen: "#9be6a8", brightYellow: "#ffc46b", brightBlue: "#a0cbff", brightMagenta: "#e3b8fa", brightCyan: "#93e2e2", brightWhite: "#ffffff",
+  },
+  solarized: {
+    background: "#002b36", foreground: "#93a1a1", cursor: "#93a1a1", cursorAccent: "#002b36",
+    selectionBackground: "#073642",
+    black: "#073642", red: "#dc322f", green: "#859900", yellow: "#b58900", blue: "#268bd2", magenta: "#d33682", cyan: "#2aa198", white: "#eee8d5",
+    brightBlack: "#002b36", brightRed: "#cb4b16", brightGreen: "#586e75", brightYellow: "#657b83", brightBlue: "#839496", brightMagenta: "#6c71c4", brightCyan: "#93a1a1", brightWhite: "#fdf6e3",
+  },
+  paper: {
+    background: "#fbfaf6", foreground: "#2b2f36", cursor: "#2563c4", cursorAccent: "#fbfaf6",
+    selectionBackground: "#d6e2f5",
+    black: "#2b2f36", red: "#c0392b", green: "#237a3b", yellow: "#a86400", blue: "#2563c4", magenta: "#8e44ad", cyan: "#14807a", white: "#8a929e",
+    brightBlack: "#7c8593", brightRed: "#d9534f", brightGreen: "#2e8f46", brightYellow: "#b97a00", brightBlue: "#3b7de0", brightMagenta: "#a35fc2", brightCyan: "#1c9a92", brightWhite: "#14171c",
+  },
 };
+type TermTheme = keyof typeof TERM_THEMES;
+const TERM_KEYS = Object.keys(TERM_THEMES) as TermTheme[];
+const UI_THEMES = ["system", "dark", "light"] as const;
+type UiTheme = (typeof UI_THEMES)[number];
+let termTheme: TermTheme = "shellport";
+
+function savedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    return allowed.find((v) => v === localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const leaves = (n: Node): Pane[] => ("pane" in n ? [n.pane] : n.kids.flatMap(leaves));
 const panesOf = (t: Tab) => leaves(t.root);
@@ -458,7 +485,7 @@ function makePane(tab: Tab, host: Host): Pane {
     lineHeight: 1.2,
     cursorBlink: true,
     scrollback: 5000,
-    theme: THEME,
+    theme: TERM_THEMES[termTheme],
     macOptionIsMeta: true,
     rightClickSelectsWord: true,
   });
@@ -1190,6 +1217,25 @@ function setHideAddr(hide: boolean, remember = true) {
   if (remember) { try { localStorage.setItem("sp.hideAddr", hide ? "1" : "0"); } catch {} }
 }
 
+function setUiTheme(value: UiTheme, remember = true) {
+  if (value === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", value);
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-ui-theme]")) b.setAttribute("aria-pressed", String(b.dataset.uiTheme === value));
+  if (remember) { try { localStorage.setItem("sp.theme", value); } catch {} }
+}
+
+function setTermTheme(value: TermTheme, remember = true) {
+  termTheme = value;
+  if (value === "shellport") document.documentElement.removeAttribute("data-term");
+  else document.documentElement.setAttribute("data-term", value);
+  $<HTMLSelectElement>("term-theme").value = value;
+  for (const t of tabs) for (const p of panesOf(t)) p.term.options.theme = TERM_THEMES[value];
+  if (remember) { try { localStorage.setItem("sp.termTheme", value); } catch {} }
+}
+
+for (const b of document.querySelectorAll<HTMLButtonElement>("[data-ui-theme]")) b.onclick = () => setUiTheme(b.dataset.uiTheme as UiTheme);
+$<HTMLSelectElement>("term-theme").onchange = () => setTermTheme($<HTMLSelectElement>("term-theme").value as TermTheme);
+
 const ZOOM_STEPS = [90, 100, 110, 120, 130, 140, 150];
 
 function setZoom(pct: number, remember = true) {
@@ -1477,6 +1523,8 @@ window.addEventListener("blur", () => setShift(false));
     if (localStorage.getItem("sp.hideAddr") === "1") setHideAddr(true, false);
     setZoom(Number(localStorage.getItem("sp.zoom")) || 100, false);
   } catch {}
+  setUiTheme(savedChoice("sp.theme", UI_THEMES, "system"), false);
+  setTermTheme(savedChoice("sp.termTheme", TERM_KEYS, "shellport"), false);
   if (matchMedia("(max-width: 900px)").matches) setDrawer(false, false);
   const [me, hs] = await Promise.all([api<Me>("/api/me"), api<Host[]>("/api/hosts")]);
   hosts = hs;

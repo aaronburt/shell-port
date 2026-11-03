@@ -1100,6 +1100,37 @@ test("UI: the Close tab button closes the account tab, and the avatar opens it a
   await closeAccount(ui);
 });
 
+test("UI: the theme and terminal theme pickers change the page and open terminals, and reset to the defaults", async () => {
+  await openAccount(ui);
+  const root = ui.locator("html");
+  const uiBackground = () => ui.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+  assert.equal(await root.getAttribute("data-theme"), null);
+  assert.equal(await ui.locator('[data-ui-theme="system"]').getAttribute("aria-pressed"), "true");
+  await ui.locator('[data-ui-theme="light"]').click();
+  assert.equal(await root.getAttribute("data-theme"), "light");
+  assert.equal(await ui.locator('[data-ui-theme="light"]').getAttribute("aria-pressed"), "true");
+  assert.equal(await ui.locator('[data-ui-theme="system"]').getAttribute("aria-pressed"), "false");
+  assert.equal(await uiBackground(), "#eef1f5");
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.theme")), "light");
+  await ui.locator('[data-ui-theme="dark"]').click();
+  assert.equal(await root.getAttribute("data-theme"), "dark");
+  assert.equal(await uiBackground(), "#11151b");
+  await ui.locator('[data-ui-theme="system"]').click();
+  assert.equal(await root.getAttribute("data-theme"), null);
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.theme")), "system");
+  await ui.locator("#term-theme").selectOption("paper");
+  assert.equal(await root.getAttribute("data-term"), "paper");
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "paper");
+  if (await ui.locator(".pane .xterm-viewport").count()) {
+    const viewport = ui.locator(".pane .xterm-viewport").first();
+    assert.equal(await viewport.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(251, 250, 246)");
+  }
+  await ui.locator("#term-theme").selectOption("shellport");
+  assert.equal(await root.getAttribute("data-term"), null);
+  assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "shellport");
+  await closeAccount(ui);
+});
+
 test("UI: holding Shift turns the files button on a tab into a close button", async () => {
   await ui.locator('button.host[data-host="plain"]').click();
   await until("connected", async () => /connected/.test(await statusText(ui)), 20_000);

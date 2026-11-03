@@ -58,6 +58,22 @@
           <button class="tool" id="zoom-in" type="button" aria-label="Zoom in">+</button>
         </div>
       </div>
+      <div class="acct-row acct-theme">
+        <div><strong id="theme-label">Theme</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Theme" aria-describedby="help-theme" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-theme" role="tooltip" popover="auto">Dark, light, or follow this device. Saved in this browser.</span></span></div>
+        <div class="seg" role="group" aria-labelledby="theme-label">
+          <button type="button" data-ui-theme="dark" aria-pressed="false">Dark</button>
+          <button type="button" data-ui-theme="light" aria-pressed="false">Light</button>
+          <button type="button" data-ui-theme="system" aria-pressed="false">System</button>
+        </div>
+      </div>
+      <div class="acct-row acct-theme">
+        <div><strong id="term-theme-label">Terminal theme</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Terminal theme" aria-describedby="help-term-theme" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-term-theme" role="tooltip" popover="auto">Colours for terminals only. The rest of the app keeps the interface theme. Saved in this browser.</span></span></div>
+        <select id="term-theme" aria-labelledby="term-theme-label">
+          <option value="shellport">Shellport</option>
+          <option value="solarized">Solarized Dark</option>
+          <option value="paper">Paper</option>
+        </select>
+      </div>
     </section>
     <section class="acct-sec">
       <h5>Screen lock</h5>
