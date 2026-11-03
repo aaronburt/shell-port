@@ -39,107 +39,123 @@
     <div class="term-wrap">
       <div class="terms" id="terms">
         <div class="page acct" id="page-account" hidden>
-  <div class="acct-body">
-    <header class="acct-head">
-      <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
-      <div><h3 id="acct-title"></h3><small id="acct-via">Signed in with GitHub</small></div>
-    </header>
-    <section class="acct-sec">
-      <h5>Display</h5>
-      <div class="acct-row">
-        <div><strong id="addr-label">Hide host addresses</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Hide host addresses" aria-describedby="help-addr" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-addr" role="tooltip" popover="auto">Hide the user@host line under each host in the sidebar. Saved in this browser.</span></span></div>
-        <button class="switch" id="addr-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="addr-label"></button>
-      </div>
-      <div class="acct-row acct-zoom">
-        <div><strong id="zoom-label">Interface zoom</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Interface zoom" aria-describedby="help-zoom" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-zoom" role="tooltip" popover="auto">Scale the whole interface. Saved in this browser.</span></span></div>
-        <div class="stepper" role="group" aria-labelledby="zoom-label">
-          <button class="tool" id="zoom-out" type="button" aria-label="Zoom out">−</button>
-          <button class="tool zoom-val" id="zoom-reset" type="button" aria-label="Reset zoom to 100%" title="Reset to 100%">100%</button>
-          <button class="tool" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+  <div class="acct-wrap">
+    <nav class="acct-nav" aria-label="Account sections">
+      <a href="#acct-display" data-jump="acct-display">Display</a>
+      <a href="#acct-security" data-jump="acct-security">Security</a>
+      <a href="#acct-server" data-jump="acct-server" id="acct-nav-server">Server</a>
+      <a href="#acct-about" data-jump="acct-about">About</a>
+    </nav>
+    <div class="acct-body">
+      <header class="acct-head">
+        <span class="avatar acct-avatar"><img class="avatar-img" id="acct-avatar-img" alt="" hidden><span id="acct-initials"></span></span>
+        <div class="acct-id">
+          <h3 id="acct-title"></h3>
+          <small id="acct-via">Signed in with GitHub</small>
+          <div class="acct-meta"><span class="acct-badge" id="acct-role" hidden>Admin</span><span id="acct-expiry"></span></div>
         </div>
+        <button class="btn ghost" id="acct-signout" type="button">Sign out</button>
+      </header>
+      <div class="acct-group" id="acct-display">
+        <section class="acct-card">
+          <div class="acct-card-head"><h5>Display</h5></div>
+          <div class="acct-row acct-theme">
+            <div class="acct-label"><strong id="theme-label">Theme</strong></div>
+            <div class="seg" role="group" aria-labelledby="theme-label">
+              <button type="button" data-ui-theme="dark" aria-pressed="false">Dark</button>
+              <button type="button" data-ui-theme="light" aria-pressed="false">Light</button>
+              <button type="button" data-ui-theme="system" aria-pressed="false">System</button>
+            </div>
+          </div>
+          <div class="acct-row stack">
+            <div class="acct-label"><strong id="term-theme-label">Terminal theme</strong></div>
+            <div class="tt-grid" role="radiogroup" aria-labelledby="term-theme-label" id="term-theme">
+              <button type="button" class="tt" role="radio" aria-checked="true" data-term="shellport"><span class="tt-prev shellport"><i>$</i> ls -l<br><em>drwxr-xr-x</em></span><b>Shellport</b></button>
+              <button type="button" class="tt" role="radio" aria-checked="false" data-term="solarized"><span class="tt-prev solarized"><i>$</i> ls -l<br><em>drwxr-xr-x</em></span><b>Solarized Dark</b></button>
+              <button type="button" class="tt" role="radio" aria-checked="false" data-term="paper"><span class="tt-prev paper"><i>$</i> ls -l<br><em>drwxr-xr-x</em></span><b>Paper</b></button>
+            </div>
+          </div>
+          <div class="acct-row">
+            <div class="acct-label"><strong id="addr-label">Hide host addresses</strong></div>
+            <button class="switch" id="addr-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="addr-label"></button>
+          </div>
+          <div class="acct-row acct-zoom">
+            <div class="acct-label"><strong id="zoom-label">Interface zoom</strong></div>
+            <div class="stepper" role="group" aria-labelledby="zoom-label">
+              <button class="tool" id="zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button class="tool zoom-val" id="zoom-reset" type="button" aria-label="Reset zoom to 100%" title="Reset to 100%">100%</button>
+              <button class="tool" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="acct-row acct-theme">
-        <div><strong id="theme-label">Theme</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Theme" aria-describedby="help-theme" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-theme" role="tooltip" popover="auto">Dark, light, or follow this device. Saved in this browser.</span></span></div>
-        <div class="seg" role="group" aria-labelledby="theme-label">
-          <button type="button" data-ui-theme="dark" aria-pressed="false">Dark</button>
-          <button type="button" data-ui-theme="light" aria-pressed="false">Light</button>
-          <button type="button" data-ui-theme="system" aria-pressed="false">System</button>
-        </div>
+      <div class="acct-group" id="acct-security">
+        <section class="acct-card" id="acct-pk-sec" hidden>
+          <div class="acct-card-head"><h5>Passkeys</h5><button class="btn ghost sm" id="pk-add" type="button">Add passkey</button></div>
+          <ul class="pk-list" id="pk-list"></ul>
+        </section>
+        <section class="acct-card">
+          <div class="acct-card-head"><h5>Screen lock</h5></div>
+          <div class="acct-row">
+            <div class="acct-label"><strong>Lock now</strong></div>
+            <button class="btn ghost" id="lock-now" type="button">Lock</button>
+          </div>
+          <div class="acct-row">
+            <div class="acct-label"><strong id="al-label">Auto-lock</strong></div>
+            <button class="switch" id="al-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="al-label"></button>
+          </div>
+          <div class="acct-row acct-sub" id="al-row" hidden>
+            <div class="acct-label"><strong>Idle time</strong></div>
+            <select id="al-mins" aria-label="Idle time before locking"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select>
+          </div>
+        </section>
+        <section class="acct-card" id="acct-ap-sec" hidden>
+          <div class="acct-card-head"><h5>SSH key passphrases</h5></div>
+          <div class="acct-row">
+            <div class="acct-label"><strong id="ap-label">Remember passphrases</strong></div>
+            <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
+          </div>
+          <div class="acct-callout" role="note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></svg>
+            <div><b>Riskier option.</b> Saved passphrases are encrypted in this browser, never on the server. Anyone who can use this browser while you are signed in, or code running in this page, can read them. Use only on a trusted device.</div>
+          </div>
+          <div class="acct-subhead"><b id="ap-count">Nothing saved.</b><button class="btn ghost sm" id="ap-forget" type="button" disabled>Forget all</button></div>
+        </section>
+        <section class="acct-card">
+          <div class="acct-card-head"><h5>Sign-ins</h5><button class="btn ghost sm" id="acct-signout-others" type="button" hidden>Sign out others</button></div>
+          <div class="acts" id="acct-signins"></div>
+        </section>
       </div>
-      <div class="acct-row acct-theme">
-        <div><strong id="term-theme-label">Terminal theme</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Terminal theme" aria-describedby="help-term-theme" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-term-theme" role="tooltip" popover="auto">Colours for terminals only. The rest of the app keeps the interface theme. Saved in this browser.</span></span></div>
-        <select id="term-theme" aria-labelledby="term-theme-label">
-          <option value="shellport">Shellport</option>
-          <option value="solarized">Solarized Dark</option>
-          <option value="paper">Paper</option>
-        </select>
+      <div class="acct-group" id="acct-server">
+        <section class="acct-card" id="acct-server-card">
+          <div class="acct-card-head"><h5>Server</h5></div>
+          <div class="acct-row" id="acct-audit-sec" hidden>
+            <div class="acct-label"><strong>Audit log</strong></div>
+            <button class="btn ghost" id="acct-audit" type="button">Open</button>
+          </div>
+          <div class="acct-row" id="acct-seal-sec" hidden>
+            <div class="acct-label"><strong>Seal server</strong></div>
+            <button class="btn ghost danger" id="acct-seal" type="button">Seal server</button>
+          </div>
+        </section>
       </div>
-    </section>
-    <section class="acct-sec">
-      <h5>Screen lock</h5>
-      <div class="acct-row">
-        <div><strong>Lock now</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Lock now" aria-describedby="help-lock" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-lock" role="tooltip" popover="auto">Hide terminals and block input while sessions stay connected. Unlock with a passkey or authenticator code.</span></span></div>
-        <button class="btn ghost" id="lock-now" type="button">Lock</button>
+      <div class="acct-group" id="acct-about">
+        <section class="acct-card">
+          <div class="acct-card-head"><h5>Keyboard shortcuts</h5></div>
+          <div class="kb-grid" id="keys"></div>
+        </section>
+        <section class="acct-card">
+          <div class="acct-card-head"><h5>About Shellport</h5></div>
+          <div class="acct-row">
+            <div class="acct-label"><strong>Version</strong><small class="mono" id="acct-version">Loading…</small></div>
+            <div class="acct-links">
+              <a class="btn ghost sm" id="acct-release-notes" href="https://github.com/aaronburt/shell-port/releases" target="_blank" rel="noopener noreferrer">Release notes</a>
+              <a class="btn ghost sm" id="acct-github" href="https://github.com/aaronburt/shell-port" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="acct-row">
-        <div><strong id="al-label">Auto-lock</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Auto-lock" aria-describedby="help-al" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-al" role="tooltip" popover="auto">Lock after no keyboard or mouse activity in this tab. Saved in this browser.</span></span></div>
-        <button class="switch" id="al-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="al-label"></button>
-      </div>
-      <div class="acct-row" id="al-row" hidden>
-        <div><strong>Idle time</strong></div>
-        <select id="al-mins" aria-label="Idle time before locking"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select>
-      </div>
-    </section>
-    <section class="acct-sec" id="acct-pk-sec" hidden>
-      <h5 class="acct-heading">Passkeys<span class="acct-help"><button class="info-btn" type="button" aria-label="About Passkeys" aria-describedby="help-passkeys" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-passkeys" role="tooltip" popover="auto">Sign in with your fingerprint, face or PIN instead of GitHub and an authenticator code. Your GitHub account must remain on the server allowlist. Add passkeys while signed in.</span></span></h5>
-      <ul class="pk-list" id="pk-list"></ul>
-      <div class="pk-foot"><button class="btn ghost" id="pk-add" type="button">Add a passkey</button></div>
-    </section>
-    <section class="acct-sec" id="acct-ap-sec" hidden>
-      <h5>SSH key passphrases</h5>
-      <div class="acct-row">
-        <div><strong id="ap-label">Remember passphrases</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Remember passphrases" aria-describedby="help-ap" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-ap" role="tooltip" popover="auto">Enter saved SSH key passphrases automatically. Stored encrypted in this browser, never on the server. Anyone with access to this browser profile while signed in, or code running in this page, can read them. Only use on a trusted device.</span></span></div>
-        <button class="switch" id="ap-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="ap-label"></button>
-      </div>
-      <p class="acct-caution">Use only on a trusted device.</p>
-      <div class="acct-row">
-        <div><strong>Saved passphrases</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Saved passphrases" aria-describedby="help-saved" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-saved" role="tooltip" popover="auto">Forgotten when you sign out. A saved passphrase that stops working is discarded.</span></span><small id="ap-count">Nothing saved.</small></div>
-        <button class="btn ghost" id="ap-forget" type="button" disabled>Forget all</button>
-      </div>
-    </section>
-    <section class="acct-sec" id="acct-audit-sec" hidden>
-      <h5>Audit log</h5>
-      <div class="acct-row">
-        <div><strong>Audit log</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Audit log" aria-describedby="help-audit" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-audit" role="tooltip" popover="auto">View sign-ins, SSH connections, host and key changes, passkeys, failed unlocks and sealing in a separate tab. Admins only.</span></span></div>
-        <button class="btn ghost" id="acct-audit" type="button">Open</button>
-      </div>
-    </section>
-    <section class="acct-sec" id="acct-seal-sec" hidden>
-      <h5>Server</h5>
-      <div class="acct-row">
-        <div><strong>Seal server</strong><span class="acct-help"><button class="info-btn" type="button" aria-label="About Seal server" aria-describedby="help-vault" aria-expanded="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6" r=".75" fill="currentColor" stroke="none"/></svg></button><span class="info-tip" id="help-vault" role="tooltip" popover="auto">Signs everyone out, disconnects all terminals and locks the server until its passphrase is entered again.</span></span><small>Disconnects everyone.</small></div>
-        <button class="btn ghost" id="acct-seal" type="button">Seal server</button>
-      </div>
-    </section>
-    <section class="acct-sec">
-      <h5>Shortcuts</h5>
-      <dl class="kv keys" id="keys"></dl>
-    </section>
-    <section class="acct-sec" id="acct-about">
-      <h5>About Shellport</h5>
-      <div class="acct-row">
-        <div><strong>Version</strong><small class="mono" id="acct-version">Loading…</small></div>
-        <a class="btn ghost" id="acct-release-notes" href="https://github.com/aaronburt/shell-port/releases" target="_blank" rel="noopener noreferrer">Release notes</a>
-      </div>
-      <div class="acct-row">
-        <div><strong>Source code</strong></div>
-        <a class="btn ghost" id="acct-github" href="https://github.com/aaronburt/shell-port" target="_blank" rel="noopener noreferrer">GitHub</a>
-      </div>
-    </section>
-    <footer class="acct-foot">
-      <button class="btn ghost" id="acct-close" type="button">Close tab</button>
-      <button class="btn" id="acct-signout" type="button">Sign out</button>
-    </footer>
+    </div>
   </div>
         </div>
         <div class="page audit-page" id="page-audit" hidden>
@@ -183,7 +199,7 @@
         <div class="drawer-body">
           <div class="drawer-head"><h5>Session</h5></div>
           <dl class="kv" id="kv"></dl>
-          <div class="drawer-head"><h5>Sign-ins</h5></div>
+          <div class="drawer-head" id="drawer-sig-head"><h5>Sign-ins</h5></div>
           <div class="acts" id="signins"></div>
           <div class="drawer-foot">
             <button class="btn ghost" id="signout-others" type="button" hidden>Sign out others</button>

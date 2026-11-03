@@ -1040,7 +1040,7 @@ const openAccount = async (page: Page) => {
 };
 
 const closeAccount = async (page: Page) => {
-  await page.locator("#acct-close").click();
+  await page.evaluate(() => (document.querySelector(".tab.ptab[data-page=account] .tab-files") as HTMLElement).click());
   await page.locator("#page-account").waitFor({ state: "hidden" });
 };
 
@@ -1091,7 +1091,7 @@ test("UI: the avatar opens the account as a tab with the display switch, the sho
 test("UI: the Close tab button closes the account tab, and the avatar opens it again without duplicating it", async () => {
   const page = ui.locator("#page-account");
   assert.equal(await page.isVisible(), true);
-  await ui.locator("#acct-close").click();
+  await ui.evaluate(() => (document.querySelector(".tab.ptab[data-page=account] .tab-files") as HTMLElement).click());
   assert.equal(await page.isVisible(), false);
   assert.equal(await ui.locator("#tabs .tab.ptab").count(), 0);
   await openAccount(ui);
@@ -1118,14 +1118,14 @@ test("UI: the theme and terminal theme pickers change the page and open terminal
   await ui.locator('[data-ui-theme="system"]').click();
   assert.equal(await root.getAttribute("data-theme"), null);
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.theme")), "system");
-  await ui.locator("#term-theme").selectOption("paper");
+  await ui.locator("#term-theme [data-term=paper]").click();
   assert.equal(await root.getAttribute("data-term"), "paper");
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "paper");
   if (await ui.locator(".pane .xterm-viewport").count()) {
     const viewport = ui.locator(".pane .xterm-viewport").first();
     assert.equal(await viewport.evaluate((el) => getComputedStyle(el).backgroundColor), "rgb(251, 250, 246)");
   }
-  await ui.locator("#term-theme").selectOption("shellport");
+  await ui.locator("#term-theme [data-term=shellport]").click();
   assert.equal(await root.getAttribute("data-term"), null);
   assert.equal(await ui.evaluate(() => localStorage.getItem("sp.termTheme")), "shellport");
   await closeAccount(ui);

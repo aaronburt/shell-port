@@ -9,7 +9,6 @@ import { initPasskeys } from "./passkeys.js";
 import { initLock } from "./lock.js";
 import { initAudit } from "./audit.js";
 import { initRecordingPage, type RecordingMeta } from "./playback.js";
-import { initAccountHelp } from "./account-help.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string; via?: string }
@@ -1058,12 +1057,18 @@ function closeTab(tab: Tab) {
   renderAll();
 }
 
+function leftText(ms: number) {
+  const m = Math.max(0, Math.round((ms - Date.now()) / 60000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
 const fmtTime = (ms: number) =>
   new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 function renderSignins() {
-  $("signout-others").hidden = othersCount === 0;
-  $("signins").innerHTML = signins.length ? signins.map((a) => {
+  $("signout-others").hidden = othersCount === 0 || !!activePage;
+  $("acct-signout-others").hidden = othersCount === 0;
+  const html = signins.length ? signins.map((a) => {
     const open = openActs.has(a.id);
     const label = a.kind === "signin" ? "signed in" : a.kind === "totp_failed" ? "wrong TOTP code" : "wrong passphrase";
     const who = a.kind === "signin" ? (a.current ? "this browser" : a.active ? "other session" : "ended") : "";
@@ -1080,6 +1085,8 @@ function renderSignins() {
       ${open ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}
     </div>`;
   }).join("") : `<div class="none">No activity yet.</div>`;
+  $("signins").innerHTML = html;
+  $("acct-signins").innerHTML = html;
 }
 
 async function loadSignins(host?: string) {
@@ -1091,7 +1098,7 @@ async function loadSignins(host?: string) {
   } catch {}
 }
 
-$("signins").addEventListener("click", (e) => {
+for (const list of [$("signins"), $("acct-signins")]) list.addEventListener("click", (e) => {
   const id = (e.target as HTMLElement).closest<HTMLElement>("[data-act]")?.dataset.act;
   if (!id) return;
   openActs.has(id) ? openActs.delete(id) : openActs.add(id);
@@ -1109,7 +1116,7 @@ function notify(message: string) {
 
 const failure = (r: Response | undefined) => (r ? `status ${r.status}` : "no response from the server");
 
-$("signout-others").onclick = async () => {
+$("acct-signout-others").onclick = $("signout-others").onclick = async () => {
   const r = await fetch("/api/signins/signout-others", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
   if (!r?.ok) notify(`Could not sign out the other sessions (${failure(r)}). They are still signed in.`);
   loadSignins(active?.focus.host.id);
@@ -1118,6 +1125,9 @@ $("signout-others").onclick = async () => {
 function renderDrawer() {
   const tab = active;
   const row = (k: string, v: string) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
+  const onAccount = activePage?.kind === "account";
+  $("drawer-sig-head").hidden = onAccount;
+  $("signins").hidden = onAccount;
   if (activePage) {
     const kind = activePage.kind;
     $("close-session").hidden = false;
@@ -1153,7 +1163,7 @@ $("keys").innerHTML = [
   ["Alt Shift ← / →", "Previous / next session in the view"],
   ["Alt Shift W", "Close session"],
   ["Alt Shift L", "Lock the screen"],
-].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+].map(([k, v]) => `<div class="kb"><kbd>${k}</kbd><span>${v}</span></div>`).join("");
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
 function copyText(text: string) {
@@ -1229,7 +1239,6 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 const accountBtn = $("account-btn");
-initAccountHelp($("page-account"));
 const scrim = $("signout-scrim");
 const addrToggle = $("addr-toggle");
 
@@ -1250,13 +1259,13 @@ function setTermTheme(value: TermTheme, remember = true) {
   termTheme = value;
   if (value === "shellport") document.documentElement.removeAttribute("data-term");
   else document.documentElement.setAttribute("data-term", value);
-  $<HTMLSelectElement>("term-theme").value = value;
+  for (const b of document.querySelectorAll<HTMLButtonElement>("#term-theme [data-term]")) b.setAttribute("aria-checked", String(b.dataset.term === value));
   for (const t of tabs) for (const p of panesOf(t)) p.term.options.theme = TERM_THEMES[value];
   if (remember) { try { localStorage.setItem("sp.termTheme", value); } catch {} }
 }
 
 for (const b of document.querySelectorAll<HTMLButtonElement>("[data-ui-theme]")) b.onclick = () => setUiTheme(b.dataset.uiTheme as UiTheme);
-$<HTMLSelectElement>("term-theme").onchange = () => setTermTheme($<HTMLSelectElement>("term-theme").value as TermTheme);
+for (const b of document.querySelectorAll<HTMLButtonElement>("#term-theme [data-term]")) b.onclick = () => setTermTheme(b.dataset.term as TermTheme);
 
 const ZOOM_STEPS = [90, 100, 110, 120, 130, 140, 150];
 
@@ -1344,10 +1353,9 @@ async function openRecording(id: string) {
 }
 
 accountBtn.onclick = () => openPage("account");
-$("acct-close").onclick = () => {
-  const p = pages.find((x) => x.kind === "account");
-  if (p) closePage(p);
-};
+for (const a of document.querySelectorAll<HTMLElement>("[data-jump]")) {
+  a.onclick = (e) => { e.preventDefault(); document.getElementById(a.dataset.jump!)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+}
 $("acct-audit").onclick = () => openPage("audit");
 
 function openSignOutDialog() {
@@ -1511,9 +1519,13 @@ function renderMe(me: Me) {
   $("acct-title").textContent = me.login;
   $("acct-via").textContent = me.via === "passkey" ? "Signed in with a passkey" : "Signed in with GitHub";
   $("acct-version").textContent = me.version;
+  $("acct-role").hidden = !me.admin;
+  $("acct-expiry").textContent = `Session ends in ${leftText(me.expiresAt)}`;
   $<HTMLAnchorElement>("acct-release-notes").href = me.releaseNotesUrl;
   passkeys.enable(!!me.canManagePasskeys);
   $("acct-seal-sec").hidden = !me.sealable;
+  $("acct-server-card").hidden = !me.sealable && !me.admin;
+  $("acct-nav-server").hidden = $("acct-server-card").hidden;
   isAdmin = !!me.admin;
   $("acct-audit-sec").hidden = !me.admin;
   $("me-role").hidden = !me.admin;
