@@ -9,15 +9,15 @@ export class PasskeyError extends Error {
 }
 
 export interface PasskeyStore {
-  readonly kind: "file" | "vault";
+  readonly kind: "vault";
   save(match: string, passkeys: PasskeyRecord[]): void;
 }
 
 export const MAX_PASSKEYS_PER_USER = 10;
 
-export function passkeyStore(kind: "file" | "vault", io: StoreIoLike): PasskeyStore {
+export function passkeyStore(io: StoreIoLike): PasskeyStore {
   return {
-    kind,
+    kind: "vault",
     save(match, passkeys) {
       try {
         const raw = io.read() as { users?: Array<{ github: string | number; passkeys?: PasskeyRecord[] }> };

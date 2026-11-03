@@ -144,7 +144,7 @@ export function createSetupApp(opts: SetupAppOptions) {
   app.disable("x-powered-by");
   app.set("trust proxy", opts.trustProxy ?? false);
 
-  app.use((req, res, next) => {
+  app.use((_req, res, next) => {
     res.setHeader(
       "Content-Security-Policy",
       [
@@ -194,11 +194,8 @@ export function createSetupApp(opts: SetupAppOptions) {
 
   app.get("/api/setup/status", (_req, res) => {
     res.json({
-      configPath: opts.configPath,
-      exists: fs.existsSync(opts.configPath),
-      writable: isPathWritable(opts.configPath),
       vaultPath: opts.vaultPath,
-      vaultWritable: Boolean(opts.vaultPath) && !fs.existsSync(opts.vaultPath!) && isPathWritable(opts.vaultPath!),
+      vaultWritable: !fs.existsSync(opts.vaultPath) && isPathWritable(opts.vaultPath),
     });
   });
 

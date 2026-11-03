@@ -8,7 +8,7 @@ import { feedPassphrase } from "../src/client/passphrase.js";
 import { resolveSecret, validateConfig } from "../src/server/config.js";
 import { RateLimiter } from "../src/server/sessions.js";
 import { base32Encode } from "../src/server/totp.js";
-import { validateSetupConfig, isPathWritable, createSetupApp } from "../src/server/setup.js";
+import { validateSetupConfig, createSetupApp } from "../src/server/setup.js";
 import { generateEd25519 } from "./keys.js";
 import { releaseNotesUrl } from "../src/server/version.js";
 
@@ -241,8 +241,6 @@ test("createSetupApp endpoints operate as expected", async () => {
     const status = await fetch(`${baseUrl}/api/setup/status`, { headers });
     assert.equal(status.status, 200);
     const statusBody = await status.json();
-    assert.equal(statusBody.exists, false);
-    assert.equal(statusBody.writable, true);
     assert.equal(statusBody.vaultWritable, true);
 
     const totpRes = await fetch(`${baseUrl}/api/setup/totp`, {

@@ -15,7 +15,7 @@ export class HostAdminError extends Error {
 }
 
 export interface HostStore {
-  readonly kind: "file" | "vault";
+  readonly kind: "vault";
   append(host: HostConfig, pem: string | undefined): HostConfig;
   update(id: string, host: HostConfig, pem: string | undefined): HostConfig;
   remove(id: string): void;
@@ -49,86 +49,45 @@ export function keyFingerprint(pem: string): string {
   return "key-" + crypto.createHash("sha256").update(pem.trim()).digest("hex").slice(0, 12);
 }
 
-const MADE_KEY = /^keys\/sp-[0-9a-f]{12}\.key$/;
-
-function refFile(h: HostConfig): string | undefined {
-  if (h.auth.type !== "key") return undefined;
-  const p = h.auth.privateKey;
-  return typeof p === "object" && p !== null && "file" in p ? p.file : undefined;
-}
-
 export interface StoreIo {
   read(): { hosts?: HostConfig[] } & Record<string, unknown>;
   write(raw: unknown): void;
 }
 
-function makeStore(kind: "file" | "vault", where: string, dir: string, io: StoreIo): HostStore {
-  const placeKey = (host: HostConfig, pem: string | undefined, written: string[]): HostConfig => {
-    if (pem === undefined || host.auth.type !== "key") return host;
-    if (kind === "vault") return { ...host, auth: { ...host.auth, privateKey: pem } };
-    const keyDir = path.join(dir, "keys");
-    fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
-    const name = `sp-${crypto.randomBytes(6).toString("hex")}.key`;
-    const file = path.join(keyDir, name);
-    fs.writeFileSync(file, pem.endsWith("\n") ? pem : pem + "\n", { mode: 0o600, flag: "wx" });
-    written.push(file);
-    return { ...host, auth: { ...host.auth, privateKey: { file: `keys/${name}` } } };
-  };
-
-  const run = (fn: (hosts: HostConfig[], written: string[]) => { host?: HostConfig; dropped?: HostConfig }): HostConfig | undefined => {
-    const written: string[] = [];
+function makeStore(io: StoreIo): HostStore {
+  const placeKey = (host: HostConfig, pem: string | undefined): HostConfig =>
+    pem === undefined || host.auth.type !== "key" ? host : { ...host, auth: { ...host.auth, privateKey: pem } };
+  const run = (fn: (hosts: HostConfig[]) => HostConfig | undefined): HostConfig | undefined => {
     try {
       const raw = io.read();
       if (!Array.isArray(raw.hosts)) raw.hosts = [];
-      const out = fn(raw.hosts, written);
+      const host = fn(raw.hosts);
       io.write(raw);
-      const gone = out.dropped && refFile(out.dropped);
-      if (kind === "file" && gone && MADE_KEY.test(gone) && !raw.hosts.some((h) => refFile(h) === gone)) {
-        try { fs.rmSync(path.join(dir, gone), { force: true }); } catch {}
-      }
-      return out.host;
+      return host;
     } catch (e) {
-      for (const f of written) try { fs.rmSync(f, { force: true }); } catch {}
       if (e instanceof HostAdminError) throw e;
-      throw new HostAdminError(500, "storage_failed", `Could not save to ${where}: ${(e as Error).message}`);
+      throw new HostAdminError(500, "storage_failed", `Could not save to the vault: ${(e as Error).message}`);
     }
   };
-
   const find = (hosts: HostConfig[], id: string) => {
-    const i = hosts.findIndex((h) => h.id === id);
+    const i = hosts.findIndex(h => h.id === id);
     if (i < 0) throw new HostAdminError(404, "not_found", "That host no longer exists.");
     return i;
   };
-
   return {
-    kind,
-    append: (host, pem) => run((hosts, w) => {
-      const h = placeKey(host, pem, w);
-      hosts.push(h);
-      return { host: h };
+    kind: "vault",
+    append: (host, pem) => run(hosts => {
+      const saved = placeKey(host, pem);
+      hosts.push(saved);
+      return saved;
     })!,
-    update: (id, host, pem) => run((hosts, w) => {
+    update: (id, host, pem) => run(hosts => {
       const i = find(hosts, id);
-      const dropped = hosts[i];
-      const h = placeKey(host, pem, w);
-      hosts[i] = h;
-      return { host: h, dropped };
+      const saved = placeKey(host, pem);
+      hosts[i] = saved;
+      return saved;
     })!,
-    remove: (id) => {
-      run((hosts) => {
-        const i = find(hosts, id);
-        const [dropped] = hosts.splice(i, 1);
-        return { dropped };
-      });
-    },
-  };
-}
-
-export function fileIo(configPath: string): StoreIo {
-  const resolved = path.resolve(configPath);
-  return {
-    read: () => JSON.parse(fs.readFileSync(resolved, "utf8")),
-    write: (raw) => writeFileAtomic(resolved, JSON.stringify(raw, null, 2) + "\n", fs.statSync(resolved).mode & 0o777),
+    remove: id => { run(hosts => { hosts.splice(find(hosts, id), 1); return undefined; }); },
   };
 }
 
@@ -144,12 +103,8 @@ export function vaultIo(vaultPath: string, dek: Buffer): StoreIo {
   };
 }
 
-export function fileStore(configPath: string): HostStore {
-  return makeStore("file", configPath, path.dirname(path.resolve(configPath)), fileIo(configPath));
-}
-
 export function vaultStore(vaultPath: string, dek: Buffer): HostStore {
-  return makeStore("vault", "the vault", path.dirname(path.resolve(vaultPath)), vaultIo(vaultPath, dek));
+  return makeStore(vaultIo(vaultPath, dek));
 }
 
 export function probeHostKey(host: string, port: number, bastion?: ConnectConfig, timeoutMs = 8000): Promise<string> {
@@ -416,7 +371,7 @@ export async function updateHost(cfg: LoadedConfig, store: HostStore, id: string
 }
 
 export function removeHost(cfg: LoadedConfig, store: HostStore, id: string): HostConfig {
-  const idx = findHost(cfg, id);
+  findHost(cfg, id);
   if (cfg.hosts.length <= 1) throw new HostAdminError(409, "last_host", "At least one host must remain.");
   if (cfg.hosts.some((h) => h.via === id)) throw new HostAdminError(409, "is_bastion", "Other hosts connect through this host. Change their route first.");
   store.remove(id);

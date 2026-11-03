@@ -155,10 +155,10 @@
       </div>
       <div class="seal-opt">
         <p>Encrypt the configuration with a passphrase (required)</p>
-        <div id="seal-fields">
+        <div>
           <input type="password" id="seal-pass" autocomplete="new-password" placeholder="Passphrase (12+ characters)" aria-label="Passphrase">
           <input type="password" id="seal-pass2" autocomplete="new-password" placeholder="Repeat passphrase" aria-label="Repeat passphrase">
-          <p class="hint" id="seal-hint">Saved to <span id="seal-path">vault.sealed</span> instead of config.json, so no plain-text config is written. Secrets given as environment variables are read from the server now and stored inside the vault. You will enter this passphrase every time the server starts. If it is lost, the vault cannot be recovered.</p>
+          <p class="hint">Saved to <span id="seal-path">vault.sealed</span> instead of config.json, so no plain-text config is written. Secrets given as environment variables are read from the server now and stored inside the vault. You will enter this passphrase every time the server starts. If it is lost, the vault cannot be recovered.</p>
         </div>
       </div>
       <div class="actions-stack">

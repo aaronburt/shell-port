@@ -310,7 +310,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     unlockOk(req, res, s, "totp");
   });
 
-  app.post("/api/lock/passkey/options", requireSession, requireSameOrigin, async (req, res) => {
+  app.post("/api/lock/passkey/options", requireSession, requireSameOrigin, async (_req, res) => {
     const s: UserSession = res.locals.session;
     if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
     const user = findUser(cfg, who(s));

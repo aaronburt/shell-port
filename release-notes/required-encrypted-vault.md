@@ -1,5 +1,6 @@
 ## Changes
 
+- Obsolete plaintext host/key storage and config-loading code has been removed; host administration tests now use encrypted vaults.
 - Configuration and secrets must be stored in an encrypted vault. Setup always requires a passphrase; plaintext setup saves and the web migration page have been removed.
 - Hosts, passkeys, audit events and session recordings use the unlocked vault key in normal operation.
 - Fresh Docker deployments mount only a writable vault directory. The setup wizard accepts private-key uploads and SSH passwords directly into the vault.

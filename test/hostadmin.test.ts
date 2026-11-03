@@ -1,13 +1,14 @@
+import { fixtureStore, loadFixture, readFixture, writeFixture } from "./vault-fixture.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { loadConfig, loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "../src/server/config.js";
+import { loadSealedConfig, promoteFirstAdmin, type LoadedConfig } from "../src/server/config.js";
 import crypto from "node:crypto";
 import ssh2 from "ssh2";
-import { addHost, describeHost, fileStore, listKeys, probeHostKey, removeHost, updateHost, vaultStore, HostAdminError } from "../src/server/hostadmin.js";
+import { addHost, describeHost, listKeys, probeHostKey, removeHost, updateHost, vaultStore, HostAdminError } from "../src/server/hostadmin.js";
 import { openVault, openVaultKeyed, sealVaultKeyed, type ScryptParams } from "../src/server/vault.js";
 import { createApp } from "../src/server/app.js";
 import { base32Encode, hotp } from "../src/server/totp.js";
@@ -34,11 +35,11 @@ function rawConfig(extra: Record<string, unknown> = {}, privateKey: unknown = lo
   };
 }
 
-function plainSetup() {
+function vaultSetup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-hostadmin-"));
-  const file = path.join(dir, "config.json");
-  fs.writeFileSync(file, JSON.stringify(rawConfig(), null, 2));
-  return { dir, file, cfg: loadConfig(file) };
+  const file = path.join(dir, "vault.sealed");
+  writeFixture(file, rawConfig());
+  return { dir, file, cfg: loadFixture(file) };
 }
 
 const base = { name: "web 03", group: "Production", host: "10.0.1.14", port: 22, username: "deploy", allowNoPassphrase: false };
@@ -48,7 +49,7 @@ async function rejects(p: Promise<unknown>, status: number, code: string) {
 }
 
 test("users can be flagged admin and the flag is validated", () => {
-  const { cfg } = plainSetup();
+  const { cfg } = vaultSetup();
   assert.deepEqual(cfg.users.map((u) => u.admin), [true, false]);
   assert.throws(() => loadSealedConfig(JSON.stringify(rawConfig({ users: [{ github: "a", totpSecret: base32Encode(TOTP_KEY), admin: "yes" }] }))), /admin must be true or false/);
 });
@@ -62,51 +63,48 @@ test("a sealed config with no admin treats the first user as admin, and one with
   assert.deepEqual(some.users.map((u) => u.admin), [false, true]);
 });
 
-test("adding a host with an uploaded key writes the key file and pins the host key", async () => {
-  const { dir, file, cfg } = plainSetup();
-  const host = await addHost(cfg, fileStore(file), { ...base, key: { upload: { name: "web_ed25519", pem: locked.private } } }, probe);
+test("adding a host with an uploaded key encrypts the key and pins the host key", async () => {
+  const { dir, file, cfg } = vaultSetup();
+  const host = await addHost(cfg, fixtureStore(file), { ...base, key: { upload: { name: "web_ed25519", pem: locked.private } } }, probe);
   assert.equal(host.id, "web-03");
   assert.deepEqual(host.hostKeyFingerprints, [FP]);
   assert.equal(cfg.hosts.length, 2);
-  const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+  const saved = readFixture(file);
   assert.equal(saved.hosts.length, 2);
-  const ref = saved.hosts[1].auth.privateKey.file as string;
-  assert.match(ref, /^keys\/sp-[0-9a-f]{12}\.key$/);
-  const keyFile = path.join(dir, ref);
-  assert.equal(fs.readFileSync(keyFile, "utf8").trim(), locked.private.trim());
-  assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+  assert.equal(saved.hosts[1].auth.privateKey.trim(), locked.private.trim());
   assert.equal(saved.hosts[1].auth.keyName, "web_ed25519");
-  assert.ok(!JSON.stringify(saved.hosts[1]).includes("PRIVATE KEY"));
-  assert.doesNotThrow(() => loadConfig(file));
+  assert.ok(!fs.readFileSync(file, "utf8").includes("PRIVATE KEY"));
+  assert.equal(fs.existsSync(path.join(dir, "keys")), false);
+  assert.doesNotThrow(() => loadFixture(file));
 });
 
 test("a key without a passphrase needs an explicit confirmation and is stored as passphrase: false", async () => {
-  const { file, cfg } = plainSetup();
+  const { file, cfg } = vaultSetup();
   const input = { ...base, key: { upload: { name: "bare", pem: bare.private } } };
-  await rejects(addHost(cfg, fileStore(file), input, probe), 400, "needs_confirmation");
+  await rejects(addHost(cfg, fixtureStore(file), input, probe), 400, "needs_confirmation");
   assert.equal(cfg.hosts.length, 1);
-  const host = await addHost(cfg, fileStore(file), { ...input, allowNoPassphrase: true }, probe);
+  const host = await addHost(cfg, fixtureStore(file), { ...input, allowNoPassphrase: true }, probe);
   assert.equal((host.auth as { passphrase?: unknown }).passphrase, false);
-  assert.doesNotThrow(() => loadConfig(file));
+  assert.doesNotThrow(() => loadFixture(file));
 });
 
 test("an existing key can be reused and shows up once in the key list", async () => {
-  const { file, cfg } = plainSetup();
+  const { file, cfg } = vaultSetup();
   const [key] = listKeys(cfg);
   assert.equal(key.name, "deploy_ed25519");
   assert.equal(key.encrypted, true);
   assert.equal(key.hosts, 1);
-  const host = await addHost(cfg, fileStore(file), { ...base, key: { existing: key.id } }, probe);
+  const host = await addHost(cfg, fixtureStore(file), { ...base, key: { existing: key.id } }, probe);
   assert.equal((host.auth as { keyName?: string }).keyName, "deploy_ed25519");
   const after = listKeys(cfg);
   assert.equal(after.length, 1);
   assert.equal(after[0].hosts, 2);
-  await rejects(addHost(cfg, fileStore(file), { ...base, name: "other", key: { existing: "key-nope" } }, probe), 400, "unknown_key");
+  await rejects(addHost(cfg, fixtureStore(file), { ...base, name: "other", key: { existing: "key-nope" } }, probe), 400, "unknown_key");
 });
 
 test("bad input, duplicates and unreachable hosts are refused without changing anything", async () => {
-  const { file, cfg } = plainSetup();
-  const store = fileStore(file);
+  const { file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
   const good = { ...base, key: { upload: { name: "k", pem: locked.private } } };
   await rejects(addHost(cfg, store, { ...good, name: "" }, probe), 400, "invalid");
   await rejects(addHost(cfg, store, { ...good, host: "bad host;rm" }, probe), 400, "invalid");
@@ -116,17 +114,15 @@ test("bad input, duplicates and unreachable hosts are refused without changing a
   await rejects(addHost(cfg, store, { ...good, name: "FIRST" }, probe), 409, "duplicate");
   await rejects(addHost(cfg, store, good, async () => { throw Object.assign(new Error("x"), { code: "ECONNREFUSED" }); }), 422, "unreachable");
   assert.equal(cfg.hosts.length, 1);
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).hosts.length, 1);
+  assert.equal(readFixture(file).hosts.length, 1);
   assert.equal(fs.existsSync(path.join(path.dirname(file), "keys")), false);
 });
 
-test("a read-only config reports a storage error and leaves no key file behind", async () => {
-  const { dir, file, cfg } = plainSetup();
-  fs.chmodSync(file, 0o444);
-  fs.mkdirSync(path.join(dir, "keys"), { mode: 0o700 });
-  fs.rmSync(path.join(dir, "keys"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "keys"), "in the way");
-  await rejects(addHost(cfg, fileStore(file), { ...base, key: { upload: { name: "k", pem: locked.private } } }, probe), 500, "storage_failed");
+test("an unavailable vault reports a storage error without changing hosts", async () => {
+  const { file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
+  fs.rmSync(file);
+  await rejects(addHost(cfg, store, { ...base, key: { upload: { name: "k", pem: locked.private } } }, probe), 500, "storage_failed");
   assert.equal(cfg.hosts.length, 1);
 });
 
@@ -161,12 +157,12 @@ test("the vault store refuses to write with a key that does not match the vault"
 });
 
 test("only admins can list keys or add hosts over the API", async () => {
-  const { file, cfg } = plainSetup();
+  const { file, cfg } = vaultSetup();
   const clock = Date.now();
   const app = createApp(cfg, {
     publicDir: path.resolve("dist/public"),
     now: () => clock,
-    hostStore: fileStore(file),
+    hostStore: fixtureStore(file),
     probeHostKey: probe,
     exchange: async () => ({ id: who === "admin" ? 1 : 2, login: who, name: who }),
   });
@@ -221,7 +217,7 @@ test("only admins can list keys or add hosts over the API", async () => {
 });
 
 test("without a store the API says hosts cannot be added", async () => {
-  const { cfg } = plainSetup();
+  const { cfg } = vaultSetup();
   const app = createApp(cfg, { publicDir: path.resolve("dist/public") });
   await new Promise<void>((r) => app.server.listen(0, "127.0.0.1", r));
   const origin = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
@@ -263,29 +259,29 @@ const countingProbe = () => {
 };
 
 test("editing a host renames and regroups it, keeps its key, and only re-pins when the address or port changes", async () => {
-  const { file, cfg } = plainSetup();
-  const store = fileStore(file);
+  const { file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
   const { calls, probe: counted } = countingProbe();
   const edited = await updateHost(cfg, store, "first", { name: "renamed", group: "Data", host: "10.0.0.1", port: 22, username: "ops", key: { keep: true }, allowNoPassphrase: false }, counted);
   assert.equal(calls.length, 0);
   assert.deepEqual([edited.id, edited.name, edited.group, edited.username], ["first", "renamed", "Data", "ops"]);
   assert.deepEqual(edited.hostKeyFingerprints, [FP]);
   assert.equal(cfg.hosts[0].name, "renamed");
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).hosts[0].name, "renamed");
+  assert.equal(readFixture(file).hosts[0].name, "renamed");
 
   const moved = await updateHost(cfg, store, "first", { name: "renamed", group: "", host: "10.0.0.9", port: 2222, username: "ops", key: { keep: true }, allowNoPassphrase: false }, counted);
   assert.deepEqual(calls, [["10.0.0.9", 2222]]);
   assert.deepEqual(moved.hostKeyFingerprints, ["SHA256:10.0.0.9-2222"]);
   assert.equal(moved.group, undefined);
-  const saved = JSON.parse(fs.readFileSync(file, "utf8")).hosts[0];
+  const saved = readFixture(file).hosts[0];
   assert.equal(saved.group, undefined);
   assert.equal(saved.auth.keyName, "deploy_ed25519");
-  assert.doesNotThrow(() => loadConfig(file));
+  assert.doesNotThrow(() => loadFixture(file));
 });
 
 test("editing checks the name against other hosts only, and refuses unknown hosts and unreachable moves", async () => {
-  const { file, cfg } = plainSetup();
-  const store = fileStore(file);
+  const { file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
   await addHost(cfg, store, { ...base, key: { existing: listKeys(cfg)[0].id } }, probe);
   const same = { name: "FIRST", group: "", host: "10.0.0.1", port: 22, username: "deploy", key: { keep: true }, allowNoPassphrase: false };
   assert.equal((await updateHost(cfg, store, "first", same, probe)).name, "FIRST");
@@ -295,58 +291,34 @@ test("editing checks the name against other hosts only, and refuses unknown host
   assert.equal(cfg.hosts[0].host, "10.0.0.1");
 });
 
-test("switching a host to an uploaded key stores it and deletes the old Shellport key file once nothing uses it", async () => {
-  const { dir, file, cfg } = plainSetup();
-  const store = fileStore(file);
-  const first = generateEd25519("first pass");
-  const input = { ...base, key: { upload: { name: "one", pem: first.private } } };
-  const added = await addHost(cfg, store, input, probe);
-  const firstRef = ((added.auth as { privateKey: { file: string } }).privateKey).file;
-  const sharer = await addHost(cfg, store, { ...base, name: "shares", key: { existing: listKeys(cfg).find((k) => k.name === "one")!.id } }, probe);
-  assert.equal(((sharer.auth as { privateKey: { file: string } }).privateKey).file, firstRef);
-
+test("replacing an uploaded key preserves the key of another host that shares it", async () => {
+  const { file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
+  const added = await addHost(cfg, store, { ...base, key: { upload: { name: "one", pem: locked.private } } }, probe);
+  const sharer = await addHost(cfg, store, { ...base, name: "shares", key: { existing: listKeys(cfg)[0].id } }, probe);
   const other = generateEd25519("another pass");
-  const swap = { ...base, key: { upload: { name: "two", pem: other.private } } };
-  await updateHost(cfg, store, added.id, swap, probe);
-  assert.equal(fs.existsSync(path.join(dir, firstRef)), true, "still used by the other host");
-  await updateHost(cfg, store, sharer.id, { ...swap, name: "shares" }, probe);
-  assert.equal(fs.existsSync(path.join(dir, firstRef)), false);
-  const refs = JSON.parse(fs.readFileSync(file, "utf8")).hosts.slice(1).map((h: any) => h.auth.privateKey.file);
-  assert.equal(refs.length, 2);
-  for (const r of refs) assert.equal(fs.existsSync(path.join(dir, r)), true);
-  assert.doesNotThrow(() => loadConfig(file));
+  await updateHost(cfg, store, added.id, { ...base, key: { upload: { name: "two", pem: other.private } } }, probe);
+  const saved = readFixture(file).hosts;
+  assert.equal(saved.find((h: any) => h.id === added.id).auth.privateKey.trim(), other.private.trim());
+  assert.equal(saved.find((h: any) => h.id === sharer.id).auth.privateKey.trim(), locked.private.trim());
+  assert.ok(!fs.readFileSync(file, "utf8").includes("PRIVATE KEY"));
 });
 
-test("deleting a host removes it everywhere, keeps keys it did not create, and refuses to remove the last host", async () => {
-  const { dir, file, cfg } = plainSetup();
-  const store = fileStore(file);
+test("deleting a host updates the vault and refuses to remove the last host", async () => {
+  const { dir, file, cfg } = vaultSetup();
+  const store = fixtureStore(file);
   const added = await addHost(cfg, store, { ...base, key: { upload: { name: "k", pem: locked.private } } }, probe);
-  const ref = ((added.auth as { privateKey: { file: string } }).privateKey).file;
-  assert.equal(fs.existsSync(path.join(dir, ref)), true);
   removeHost(cfg, store, added.id);
-  assert.equal(fs.existsSync(path.join(dir, ref)), false);
+  assert.equal(fs.existsSync(path.join(dir, "keys")), false);
   assert.deepEqual(cfg.hosts.map((h) => h.id), ["first"]);
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).hosts.length, 1);
+  assert.equal(readFixture(file).hosts.length, 1);
   assert.throws(() => removeHost(cfg, store, "first"), (e: unknown) => e instanceof HostAdminError && e.code === "last_host");
   assert.throws(() => removeHost(cfg, store, "ghost"), (e: unknown) => e instanceof HostAdminError && e.code === "not_found");
   assert.equal(cfg.hosts.length, 1);
 });
 
-test("an operator's own key file is never deleted along with a host", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-hostadmin-"));
-  fs.mkdirSync(path.join(dir, "keys"));
-  fs.writeFileSync(path.join(dir, "keys", "mine_ed25519"), locked.private);
-  const file = path.join(dir, "config.json");
-  const raw = rawConfig({}, { file: "keys/mine_ed25519" });
-  raw.hosts.push({ id: "second", name: "second", host: "10.0.0.2", username: "deploy", auth: { type: "key", privateKey: { file: "keys/mine_ed25519" } }, hostKeyFingerprints: [FP] } as never);
-  fs.writeFileSync(file, JSON.stringify(raw));
-  const cfg = loadConfig(file);
-  removeHost(cfg, fileStore(file), "second");
-  assert.equal(fs.existsSync(path.join(dir, "keys", "mine_ed25519")), true);
-});
-
 test("describeHost reports the current key without exposing it", () => {
-  const { cfg } = plainSetup();
+  const { cfg } = vaultSetup();
   const d = describeHost(cfg, "first");
   assert.deepEqual(d, { id: "first", name: "first", group: "", host: "10.0.0.1", port: 22, username: "deploy", via: "", auth: { type: "key", keyId: listKeys(cfg)[0].id, keyName: "deploy_ed25519", encrypted: true } });
   assert.ok(!JSON.stringify(d).includes("PRIVATE KEY"));
@@ -372,13 +344,13 @@ test("the vault store can edit and delete hosts, re-encrypting the vault each ti
 });
 
 test("only admins can read, edit or delete a host over the API", async () => {
-  const { file, cfg } = plainSetup();
+  const { file, cfg } = vaultSetup();
   const clock = Date.now();
   let who = "admin";
   const app = createApp(cfg, {
     publicDir: path.resolve("dist/public"),
     now: () => clock,
-    hostStore: fileStore(file),
+    hostStore: fixtureStore(file),
     probeHostKey: probe,
     exchange: async () => ({ id: who === "admin" ? 1 : 2, login: who, name: who }),
   });
@@ -426,9 +398,9 @@ const bastionHost = { id: "bastion", name: "bastion", host: "198.51.100.1", user
 
 function routedSetup(extraHosts: unknown[] = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shellport-hostadmin-route-"));
-  const file = path.join(dir, "config.json");
-  fs.writeFileSync(file, JSON.stringify(rawConfig({ hosts: [rawConfig().hosts[0], bastionHost, ...extraHosts] }), null, 2));
-  return { dir, file, cfg: loadConfig(file) };
+  const file = path.join(dir, "vault.sealed");
+  writeFixture(file, rawConfig({ hosts: [rawConfig().hosts[0], bastionHost, ...extraHosts] }));
+  return { dir, file, cfg: loadFixture(file) };
 }
 
 test("a host added through a bastion is pinned through it and saves the route", async () => {
@@ -438,20 +410,20 @@ test("a host added through a bastion is pinned through it and saves the route", 
     seen.push({ host, port, bastion });
     return FP;
   };
-  const host = await addHost(cfg, fileStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, through);
+  const host = await addHost(cfg, fixtureStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, through);
   assert.equal(host.via, "bastion");
   assert.deepEqual(host.hostKeyFingerprints, [FP]);
   assert.equal(seen[0].bastion?.host, "198.51.100.1");
   assert.equal(seen[0].bastion?.username, "jump");
   assert.equal((seen[0].bastion?.hostVerifier as (k: Buffer) => boolean)(Buffer.from("not the pinned key")), false);
-  const saved = JSON.parse(fs.readFileSync(file, "utf8")).hosts.find((h: { id: string }) => h.id === host.id);
+  const saved = readFixture(file).hosts.find((h: { id: string }) => h.id === host.id);
   assert.equal(saved.via, "bastion");
 });
 
 test("a direct host is probed without a bastion, as before", async () => {
   const { file, cfg } = routedSetup();
   const seen: Array<unknown> = [];
-  const host = await addHost(cfg, fileStore(file), { ...base, key: { existing: listKeys(cfg)[0].id } }, async (...args) => {
+  const host = await addHost(cfg, fixtureStore(file), { ...base, key: { existing: listKeys(cfg)[0].id } }, async (...args) => {
     seen.push(args[2]);
     return FP;
   });
@@ -461,13 +433,13 @@ test("a direct host is probed without a bastion, as before", async () => {
 
 test("a bastion whose key has a passphrase cannot be used to read a host key", async () => {
   const { file, cfg } = routedSetup();
-  await rejects(addHost(cfg, fileStore(file), { ...base, via: "first", key: { existing: listKeys(cfg)[0].id } }, probe), 422, "bastion_passphrase");
+  await rejects(addHost(cfg, fixtureStore(file), { ...base, via: "first", key: { existing: listKeys(cfg)[0].id } }, probe), 422, "bastion_passphrase");
   assert.equal(cfg.hosts.length, 2);
 });
 
 test("routes must name another direct host, and a bastion cannot itself be routed", async () => {
   const { file, cfg } = routedSetup();
-  const store = fileStore(file);
+  const store = fixtureStore(file);
   const input = { ...base, key: { existing: listKeys(cfg)[0].id } };
   await rejects(addHost(cfg, store, { ...input, via: "nope" }, probe), 400, "invalid");
   await addHost(cfg, store, { ...input, via: "bastion" }, probe);
@@ -479,7 +451,7 @@ test("routes must name another direct host, and a bastion cannot itself be route
 
 test("a host other hosts route through cannot be deleted or re-routed", async () => {
   const { file, cfg } = routedSetup();
-  const store = fileStore(file);
+  const store = fixtureStore(file);
   await addHost(cfg, store, { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, probe);
   assert.throws(() => removeHost(cfg, store, "bastion"), (e: unknown) => e instanceof HostAdminError && e.status === 409 && e.code === "is_bastion");
   await rejects(updateHost(cfg, store, "bastion", { ...base, name: "bastion", host: "198.51.100.1", username: "jump", key: { keep: true }, via: "first" }, probe), 409, "is_bastion");
@@ -487,7 +459,7 @@ test("a host other hosts route through cannot be deleted or re-routed", async ()
 
 test("changing a route pins the host key again through the new route", async () => {
   const { file, cfg } = routedSetup();
-  const store = fileStore(file);
+  const store = fixtureStore(file);
   const id = (await addHost(cfg, store, { ...base, key: { existing: listKeys(cfg)[0].id } }, probe)).id;
   const seen: Array<ssh2.ConnectConfig | undefined> = [];
   const updated = await updateHost(cfg, store, id, { ...base, key: { keep: true }, via: "bastion" }, async (_h, _p, bastion) => {
@@ -507,7 +479,7 @@ test("changing a route pins the host key again through the new route", async () 
 
 test("describeHost reports the route", async () => {
   const { file, cfg } = routedSetup();
-  const id = (await addHost(cfg, fileStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, probe)).id;
+  const id = (await addHost(cfg, fixtureStore(file), { ...base, via: "bastion", key: { existing: listKeys(cfg)[0].id } }, probe)).id;
   assert.equal(describeHost(cfg, id).via, "bastion");
 });
 

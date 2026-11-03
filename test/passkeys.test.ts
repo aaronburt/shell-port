@@ -61,7 +61,7 @@ let failSave = false;
 let nextUser = "aaronburt";
 let totpSecret = "";
 const store: PasskeyStore = {
-  kind: "file",
+  kind: "vault",
   save: (_match, list) => {
     if (failSave) throw Object.assign(new Error("read-only"), { status: 500 });
     saved = list;
