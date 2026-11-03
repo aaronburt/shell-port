@@ -286,7 +286,7 @@ test("the host list shows only permitted hosts and never a secret", async () => 
   const { status, body } = await getJson(cookie, "/api/hosts");
   assert.equal(status, 200);
   assert.deepEqual(body.map((h: any) => h.id).sort(), ["locked", "mismatch", "nofiles", "plain"]);
-  for (const h of body) assert.deepEqual(Object.keys(h).sort(), ["addr", "group", "id", "name", "tag"]);
+  for (const h of body) assert.deepEqual(Object.keys(h).sort(), ["addr", "group", "id", "name", "tag", "via"]);
   const text = JSON.stringify(body);
   assert.doesNotMatch(text, /SHA256:|PRIVATE KEY|OPENSSH|never-send|password|privateKey/i);
   assert.ok(!text.includes(targets.plain.fingerprint.slice(7, 20)), "the host list must not carry the host key fingerprint");
