@@ -193,7 +193,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .15s ease; }
 .switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--accent-ink); }
-.acct-zoom { margin-top: 16px; }
+.acct-zoom, .acct-theme { margin-top: 16px; }
+.acct .seg { flex: none; width: 230px; }
 .stepper { display: flex; align-items: center; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .stepper .tool { border-radius: 0; min-width: 34px; height: 30px; padding: 0 8px; font-size: 15px; }
 .stepper .tool:disabled { opacity: .4; cursor: default; }
