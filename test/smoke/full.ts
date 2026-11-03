@@ -877,7 +877,7 @@ test("UI: the avatar opens a large centred account modal with the display switch
   assert.match(await modal.innerText(), /Signed in with GitHub/);
   const box = await modal.boundingBox();
   const viewport = ui.viewportSize()!;
-  assert.ok(box && Math.abs(box.width - viewport.width) < 2, `the modal fills the viewport width: ${box?.width}px wide`);
+  assert.ok(box && Math.abs(box.width - (viewport.width - 32)) < 2, `the modal fills the available width with 16px side margins: ${box?.width}px wide`);
   assert.ok(Math.abs(box.x + box.width / 2 - viewport.width / 2) < 2 && Math.abs(box.y + box.height / 2 - viewport.height / 2) < 2, `the modal is centred in the window: ${JSON.stringify({ box, viewport })}`);
   const text = flatten(await modal.innerText());
   assert.match(text, /display/i);

@@ -105,7 +105,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .kv.keys dt { font-family: var(--f-mono); font-size: 11px; color: var(--fg); }
 .kv.keys dd { font-family: var(--f-ui); color: var(--muted); }
 
-.acct { width: 100%; max-width: none; max-height: calc(100% - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--fg); box-shadow: 0 24px 60px rgba(0,0,0,.45); overflow: hidden; font-size: 13px; }
+.acct { width: calc(100% - 32px); max-width: none; max-height: calc(100% - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--fg); box-shadow: 0 24px 60px rgba(0,0,0,.45); overflow: hidden; font-size: 13px; }
 .acct::backdrop { background: rgba(5,8,12,.62); }
 .acct[open] { animation: acct-in .18s ease; }
 @keyframes acct-in { from { opacity: 0; transform: translateY(10px); } }
