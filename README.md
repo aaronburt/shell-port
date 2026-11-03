@@ -211,9 +211,15 @@ npm test                 # unit and end-to-end tests
 npm run typecheck        # TypeScript checks
 npm run smoke -- <url>   # black-box security and header checks against a running instance
 npm run smoke:full       # real SSH containers and a headless browser (needs Docker)
+npm run smoke:ci         # all six smoke sections in parallel (needs Docker and Chromium)
+npm run smoke:pages      # browser checks for page links
 ```
 
 Set `SMOKE_SCREENSHOTS=<folder>` with `npm run smoke:full` to save UI screenshots.
+
+CI runs authentication, SSH/SFTP, terminal UI, account UI, vault setup, and page links in separate parallel jobs. Each section has its own app and fixtures; tests within a section stay sequential to preserve session lifecycle checks. Browser jobs cache the Playwright headless shell by version and platform and still install system dependencies on every run. Authentication and SSH jobs need no browser installation.
+
+To run selected sections locally, use `node scripts/smoke-tests.mjs auth ssh` (available sections: `auth`, `ssh`, `ui-terminal`, `ui-account`, `setup`, `pages`). The runner builds assets once before starting isolated test processes and fails if any section fails.
 
 ## Writing release notes
 

@@ -12,8 +12,9 @@
     "test": "npm run build && esbuild test/e2e.test.ts test/security.test.ts test/unit.test.ts test/vault.test.ts test/unseal.test.ts test/vaultops.test.ts test/hostadmin.test.ts test/passkeys.test.ts test/audit.test.ts test/recording.test.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outdir=.test-build --out-extension:.js=.mjs && node --test test/release-notes.test.mjs .test-build/e2e.test.mjs .test-build/security.test.mjs .test-build/unit.test.mjs .test-build/vault.test.mjs .test-build/unseal.test.mjs .test-build/vaultops.test.mjs .test-build/hostadmin.test.mjs .test-build/passkeys.test.mjs .test-build/audit.test.mjs .test-build/recording.test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:account": "npm run build && esbuild test/smoke/account-help.ts --bundle --platform=node --format=esm --packages=external --outfile=.test-build/account-help.mjs && node .test-build/account-help.mjs",
-    "smoke:full": "npm run build && esbuild test/smoke/full.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=.test-build/smoke-full.mjs && node --test --test-timeout=240000 .test-build/smoke-full.mjs",
-    "smoke:pages": "npm run build && esbuild test/smoke/page-links.ts --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=.test-build/page-links.mjs && node --test --test-timeout=120000 .test-build/page-links.mjs"
+    "smoke:full": "node scripts/smoke-tests.mjs auth ssh ui-terminal ui-account setup",
+    "smoke:pages": "node scripts/smoke-tests.mjs pages",
+    "smoke:ci": "node scripts/smoke-tests.mjs"
   },
   "license": "AGPL-3.0-only",
   "dependencies": {
