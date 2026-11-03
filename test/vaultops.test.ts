@@ -118,6 +118,7 @@ test("the setup wizard can seal the configuration instead of writing config.json
   process.env.OPS_SETUP_PW = "pw-from-env";
   let sealedWith: string | undefined;
   const { server, shutdown } = createSetupApp({
+    token: "vaultops-setup-code",
     configPath,
     vaultPath,
     publicDir: path.join(dir, "public"),
@@ -131,7 +132,7 @@ test("the setup wizard can seal the configuration instead of writing config.json
     users: [{ github: "alice", totpSecret: base32Encode(Buffer.alloc(20, 5)) }],
     hosts: [{ id: "h", host: "h", username: "u", auth: { type: "password", password: { env: "OPS_SETUP_PW" } }, hostKeyFingerprints: ["SHA256:a"] }],
   };
-  const send = (body: unknown) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const send = (body: unknown) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Shellport-Setup-Code": "vaultops-setup-code", Origin: new URL(url).origin }, body: JSON.stringify(body) });
   try {
     const weak = await send({ config, passphrase: "short" });
     assert.equal(weak.status, 400);

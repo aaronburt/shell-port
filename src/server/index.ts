@@ -65,10 +65,12 @@ function startApp(cfg: LoadedConfig, vault?: string, dek?: Buffer, unsealed = fa
 
 function startSetup() {
   const port = Number(process.env.PORT || 8080);
-  const host = process.env.HOST || "0.0.0.0";
+  const host = process.env.HOST || "127.0.0.1";
+  const token = crypto.randomBytes(32).toString("hex");
 
   let appStarted = false;
   const { server, shutdown } = createSetupApp({
+    token,
     configPath,
     vaultPath,
     publicDir,
@@ -83,6 +85,7 @@ function startSetup() {
   server.listen(port, host, () => {
     audit("server.setup", { listen: `${host}:${port}`, configPath });
     console.log(`No configuration file found at ${configPath}. Starting setup wizard on http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+    console.log(`Setup code: ${token}`);
   });
 
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => shutdown(5000, sig).then(() => process.exit(0)));

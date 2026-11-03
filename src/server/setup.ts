@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import crypto from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import QRCode from "qrcode";
 import { newSecret, otpauthUri, base32Decode } from "./totp.js";
-import { loadConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
+import { validateConfig, loadSealedConfig, type LoadedConfig } from "./config.js";
+import { RateLimiter } from "./sessions.js";
 import { checkPassphraseStrength, sealVaultKeyed } from "./vault.js";
 import { inlineSecrets, writeFileAtomic } from "./vaultops.js";
 import { audit } from "./log.js";
@@ -125,6 +127,7 @@ export function isPathWritable(targetPath: string): boolean {
 }
 
 export interface SetupAppOptions {
+  token: string;
   configPath: string;
   publicDir: string;
   vaultPath?: string;
@@ -133,6 +136,10 @@ export interface SetupAppOptions {
 }
 
 export function createSetupApp(opts: SetupAppOptions) {
+  if (!opts.token) throw new Error("A setup code is required");
+  const tokenHash = crypto.createHash("sha256").update(opts.token).digest();
+  const attempts = new RateLimiter(30, 15 * 60_000);
+  let completed = false;
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", opts.trustProxy ?? false);
@@ -167,6 +174,24 @@ export function createSetupApp(opts: SetupAppOptions) {
     res.sendFile(path.join(opts.publicDir, "setup.html"));
   });
 
+  // Authenticate before parsing request bodies or resolving server-side secrets.
+  app.use("/api/setup", (req, res, next) => {
+    let origin: URL;
+    try { origin = new URL(`${req.protocol}://${req.headers.host}`); }
+    catch { return res.status(400).json({ error: "bad_request" }); }
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname);
+    if (!req.secure && !local) return res.status(403).json({ error: "https_required", message: "Setup requires HTTPS or localhost." });
+    if ((req.method !== "GET" || req.headers.origin !== undefined) && req.headers.origin !== origin.origin)
+      return res.status(403).json({ error: "bad_origin", message: "Open setup at its own address and try again." });
+    const given = req.headers["x-shellport-setup-code"];
+    if (typeof given !== "string" || !crypto.timingSafeEqual(crypto.createHash("sha256").update(given).digest(), tokenHash)) {
+      if (!attempts.hit(req.ip ?? "")) return res.status(429).json({ error: "rate_limited", message: "Too many incorrect setup codes. Try again in 15 minutes." });
+      return res.status(401).json({ error: "bad_token", message: "Enter the setup code printed in the server logs." });
+    }
+    if (completed) return res.status(409).json({ error: "setup_complete", message: "Setup is already complete. Reload the page." });
+    next();
+  });
+
   app.get("/api/setup/status", (_req, res) => {
     res.json({
       configPath: opts.configPath,
@@ -196,6 +221,8 @@ export function createSetupApp(opts: SetupAppOptions) {
   });
 
   app.post("/api/setup/save", express.json({ limit: "128kb" }), (req, res) => {
+    // Another save can finish while this request's body is being parsed.
+    if (completed) return res.status(409).json({ ok: false, error: "Setup is already complete." });
     const wrapped = req.body && typeof req.body === "object" && req.body.config && typeof req.body.config === "object";
     const config = wrapped ? req.body.config : req.body;
     const passphrase = wrapped && typeof req.body.passphrase === "string" && req.body.passphrase ? req.body.passphrase : undefined;
@@ -206,8 +233,6 @@ export function createSetupApp(opts: SetupAppOptions) {
 
     if (passphrase !== undefined) {
       if (!opts.vaultPath) return res.status(400).json({ ok: false, error: "Sealing is not available here." });
-      if (!req.secure && !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.ip ?? ""))
-        return res.status(403).json({ ok: false, error: "A passphrase can only be sent over HTTPS or from the local machine." });
       const weak = checkPassphraseStrength(passphrase);
       if (weak) return res.status(400).json({ ok: false, error: weak });
       if (fs.existsSync(opts.vaultPath)) return res.status(409).json({ ok: false, error: `${opts.vaultPath} already exists.` });
@@ -230,16 +255,23 @@ export function createSetupApp(opts: SetupAppOptions) {
         return res.status(403).json({ ok: false, readOnly: true, error: `Cannot write to ${opts.vaultPath}: ${(e as Error).message}` });
       }
       audit("setup.sealed", { path: opts.vaultPath });
+      completed = true;
       res.json({ ok: true, saved: true, sealed: true, canTransition: Boolean(opts.onSaved) });
       if (opts.onSaved) setTimeout(() => opts.onSaved?.(sealed, opts.vaultPath, dek), 500);
       return;
     }
 
+    const resolved = path.resolve(opts.configPath);
+    let loaded: LoadedConfig;
     try {
-      const resolved = path.resolve(opts.configPath);
+      loaded = validateConfig(config, path.dirname(resolved));
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: (e as Error).message });
+    }
+    try {
       const dir = path.dirname(resolved);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(resolved, JSON.stringify(config, null, 2) + "\n", "utf8");
+      writeFileAtomic(resolved, JSON.stringify(config, null, 2) + "\n");
     } catch (e) {
       return res.status(403).json({
         ok: false,
@@ -249,13 +281,7 @@ export function createSetupApp(opts: SetupAppOptions) {
     }
 
     audit("setup.saved", { path: opts.configPath });
-
-    let loaded: LoadedConfig | undefined;
-    try {
-      loaded = loadConfig(opts.configPath);
-    } catch (e) {
-      audit("setup.load_error", { error: (e as Error).message });
-    }
+    completed = true;
 
     res.json({
       ok: true,

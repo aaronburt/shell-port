@@ -23,6 +23,19 @@
 </header>
 
 <main class="setup-layout">
+  <section class="setup-main" id="setup-unlock">
+    <form class="card" id="setup-unlock-form" autocomplete="off">
+      <h2 class="card-title">Enter your setup code</h2>
+      <p class="hint">Find the code in the Shellport server logs. With Docker, run <code>docker compose logs shellport</code>. A new code is generated each time setup starts.</p>
+      <div class="form-group">
+        <label for="setup-code">Setup code</label>
+        <input type="password" id="setup-code" autocomplete="off" spellcheck="false" required autofocus>
+      </div>
+      <p class="hint" id="setup-unlock-error" role="alert" hidden></p>
+      <button class="btn" type="submit" id="setup-unlock-button">Continue to setup</button>
+    </form>
+  </section>
+  <div id="setup-workspace" hidden>
   <section class="setup-main">
     <form id="setup-form" autocomplete="off">
       <fieldset class="card">
@@ -159,6 +172,7 @@
       <p class="hint center" id="save-note">If container filesystem is read-only, download the file and mount it at <code id="note-path">/config/config.json</code>.</p>
     </div>
   </aside>
+  </div>
 </main>
 <script src="/assets/setup.js"></script>
 </body>

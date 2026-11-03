@@ -8,6 +8,7 @@ services:
     env_file: .env
     environment:
       SHELLPORT_VAULT: /vault/vault.sealed
+      SHELLPORT_TRUST_PROXY: "1"
     volumes:
       - ./config.json:/config/config.json:ro
       - ./keys:/config/keys:ro
