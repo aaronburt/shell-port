@@ -56,6 +56,7 @@ function startApp(cfg: LoadedConfig, vault: string, dek: Buffer, unsealed = fals
     publicDir,
     auditLog,
     hostStore,
+    aiStore: vaultIo(vault, dek),
     recordings,
     passkeyStore: passkeyStore(vaultIo(vault, dek)),
     onSeal: () => {
