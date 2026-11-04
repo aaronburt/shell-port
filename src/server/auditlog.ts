@@ -24,6 +24,13 @@ export const AUDIT_KINDS = {
   recording_downloaded: { group: "Recordings", label: "Recording downloaded" },
   recording_deleted: { group: "Recordings", label: "Recording deleted" },
   recording_failed: { group: "Recordings", label: "Recording failed, session closed", bad: true },
+  ai_settings: { group: "AI", label: "AI settings changed" },
+  ai_investigate: { group: "AI", label: "Investigation started" },
+  ai_command_run: { group: "AI", label: "AI command run" },
+  ai_command_skipped: { group: "AI", label: "AI command skipped" },
+  ai_command_denied: { group: "AI", label: "AI command blocked", bad: true },
+  ai_output_sent: { group: "AI", label: "Output sent to AI" },
+  ai_investigate_stopped: { group: "AI", label: "Investigation stopped" },
 } as const satisfies Record<string, { group: string; label: string; bad?: true }>;
 
 export type AuditKind = keyof typeof AUDIT_KINDS;

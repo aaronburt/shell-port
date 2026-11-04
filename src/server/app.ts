@@ -136,11 +136,17 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   const requireAdmin = (_req: Request, res: Response, next: NextFunction) =>
     isAdmin(cfg, who(res.locals.session)) ? next() : res.status(403).json({ error: "forbidden" });
 
-  const ai = aiRoutes(opts.aiStore);
+  const ai = aiRoutes(opts.aiStore, {
+    terminal: (s, id) => [...(terminalsBySession.get(s.id) ?? [])].find((t) => t.id === id),
+    trail: (kind, s, ip, host, detail) => auditLog.add({ kind, user: s.login, ip, host, detail }),
+  });
   app.get("/api/ai/status", requireSession, ai.status);
   app.get("/api/ai/settings", requireSession, requireAdmin, ai.settings);
   app.put("/api/ai/settings", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "8kb" }), ai.save);
   app.post("/api/ai/suggest", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.suggest);
+  app.post("/api/ai/investigate", requireSession, requireSameOrigin, express.json({ limit: "64kb" }), ai.investigate);
+  app.post("/api/ai/investigate/run", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.run);
+  app.post("/api/ai/investigate/stop", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.stop);
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
 

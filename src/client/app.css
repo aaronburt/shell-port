@@ -515,3 +515,28 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .ai-risks { margin: 0; padding-left: 18px; color: #e9a63a; }
 .ai-risks:empty { display: none; }
 #ai-open.on { color: var(--accent); }
+.ai-modes { display: flex; width: fit-content; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.ai-modes[hidden] { display: none; }
+.ai-modes button { border: 0; background: transparent; color: var(--muted); padding: 5px 14px; font: inherit; cursor: pointer; }
+.ai-modes button + button { border-left: 1px solid var(--line); }
+.ai-modes button[aria-pressed="true"] { color: var(--fg); background: var(--term-bg); box-shadow: inset 0 -2px 0 var(--accent); }
+.ai-inv { display: grid; gap: 8px; }
+.ai-inv[hidden] { display: none; }
+.ai-trail { display: grid; gap: 8px; }
+.ai-step { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
+.ai-step.cur { border-color: var(--accent); }
+.ai-step.blocked { border-color: #ef6b6b; }
+.ai-step-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.ai-step-tag { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.ai-step p, .ai-step small { margin: 0; }
+.ai-step small { color: var(--muted); }
+.ai-step textarea { width: 100%; min-height: 90px; max-height: 200px; resize: vertical; color: inherit; background: var(--term-bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: 12px ui-monospace, Menlo, Consolas, monospace; }
+.ai-step pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--term-bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.ai-step-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-inv-foot { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; }
+.ai-stop { color: #ef6b6b; }
+.ai-investigate { display: grid; gap: 10px; border: 1px solid #667085; border-radius: 8px; padding: 12px; margin: 0; }
+.ai-investigate legend { padding: 0 6px; color: var(--muted, #9aa4b2); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.ai-pair { display: flex; gap: 12px; }
+.ai-pair label { flex: 1; }
+.ai-dialog select { color: inherit; background: #0b0e13; border: 1px solid #667085; border-radius: 6px; padding: 8px; }
