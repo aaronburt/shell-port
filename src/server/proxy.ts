@@ -29,6 +29,13 @@ export function parseHostContext(out: string, username: string) {
   return { ...(os ? { os } : {}), ...(shell ? { shell } : {}), ...(arch ? { arch } : {}), username };
 }
 
+export interface ExecResult {
+  output: string;
+  exitCode: number | null;
+  truncated: boolean;
+  timedOut: boolean;
+}
+
 export interface TerminalTiming {
   passphraseWaitMs?: number;
   idleTimeoutMs?: number;
@@ -38,8 +45,10 @@ export interface TerminalInfo {
   id: string;
   user: string;
   hostId: string;
+  hostName: string;
   files: boolean;
   sftp(): Promise<SFTPWrapper>;
+  exec(command: string, timeoutMs: number, maxChars: number): Promise<ExecResult>;
   touch(): void;
   close(reason: string): void;
 }
@@ -141,8 +150,40 @@ export function openTerminal(opts: {
     });
     return sftpPromise;
   };
+  let execBusy = false;
+  const exec = (command: string, timeoutMs: number, maxChars: number): Promise<ExecResult> => {
+    if (!ready || closed) return Promise.reject(new Error("not_connected"));
+    if (execBusy) return Promise.reject(new Error("busy"));
+    execBusy = true;
+    return new Promise<ExecResult>((resolve, reject) => {
+      ssh.exec(command, (err, ch) => {
+        if (err) {
+          execBusy = false;
+          return reject(new Error("exec_failed"));
+        }
+        let out = "";
+        let truncated = false;
+        let timedOut = false;
+        let code: number | null = null;
+        const take = (d: Buffer) => {
+          if (out.length >= maxChars) { truncated = true; return; }
+          out += d.toString("utf8");
+          if (out.length > maxChars) { out = out.slice(0, maxChars); truncated = true; }
+        };
+        const timer = setTimeout(() => { timedOut = true; try { ch.close(); } catch {} }, timeoutMs);
+        ch.on("data", take);
+        ch.stderr.on("data", take);
+        ch.on("exit", (c: number | null) => { code = typeof c === "number" ? c : null; });
+        ch.on("close", () => {
+          clearTimeout(timer);
+          execBusy = false;
+          resolve({ output: out, exitCode: code, truncated, timedOut });
+        });
+      });
+    });
+  };
   const touch = () => { lastActivity = Date.now(); };
-  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, files, sftp, touch, close: (reason) => close(reason) };
+  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, hostName: host.name, files, sftp, exec, touch, close: (reason) => close(reason) };
 
   const ssh = new Client();
   const bastion = route ? new Client() : undefined;

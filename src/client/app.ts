@@ -1265,6 +1265,7 @@ function aiTarget() {
   const p = t.focus;
   return {
     context: () => p.context,
+    terminalId: () => (p.state === "connected" ? p.info?.id : undefined),
     output: () => {
       const buf = p.term.buffer.active;
       let end = buf.length;
