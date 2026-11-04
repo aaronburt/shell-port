@@ -17,6 +17,18 @@ const PASSPHRASE_WAIT_MS = 120_000;
 const MAX_PASSPHRASE_LEN = 1024;
 const DRAIN_POLL_MS = 25;
 
+const CONTEXT_COMMAND = `uname -sm 2>/dev/null; (. /etc/os-release 2>/dev/null && printf '%s\\n' "$PRETTY_NAME") || true; printf '%s\\n' "$SHELL"`;
+const CONTEXT_WAIT_MS = 5000;
+
+export function parseHostContext(out: string, username: string) {
+  const lines = out.trim().split("\n").map((l) => l.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80));
+  const [kernel = "", arch = ""] = (lines[0] ?? "").split(/\s+/);
+  const distro = lines.length >= 3 ? lines[1] : "";
+  const shell = (lines[lines.length - 1] ?? "").split("/").pop() ?? "";
+  const os = distro || kernel;
+  return { ...(os ? { os } : {}), ...(shell ? { shell } : {}), ...(arch ? { arch } : {}), username };
+}
+
 export interface TerminalTiming {
   passphraseWaitMs?: number;
   idleTimeoutMs?: number;
@@ -251,6 +263,17 @@ export function openTerminal(opts: {
           since: new Date().toISOString(),
           recording: !!recording,
         },
+      });
+      ssh.exec(CONTEXT_COMMAND, (execErr, ch) => {
+        if (execErr) return;
+        let out = "";
+        const timer = setTimeout(() => ch.close(), CONTEXT_WAIT_MS);
+        ch.on("data", (d: Buffer) => { if (out.length < 2048) out += d.toString("utf8"); });
+        ch.stderr.on("data", () => {});
+        ch.on("close", () => {
+          clearTimeout(timer);
+          if (!closed) send({ t: "context", ...parseHostContext(out, host.username) });
+        });
       });
       const onData = (d: Buffer) => {
         if (closed) return;

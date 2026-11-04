@@ -17,7 +17,7 @@
     </div>
     <div class="tab-scroll" id="tab-scroll"></div>
     <div class="tab-tools">
-      <button class="btn ghost sm" id="ai-open" type="button" hidden>Ask AI</button>
+      <button class="tool" id="ai-open" type="button" aria-label="Ask AI" aria-expanded="false" aria-controls="ai-panel" title="Ask AI (Alt Shift A)" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
       <button class="tool" id="lock-btn" type="button" aria-label="Lock screen" title="Lock screen (Alt Shift L). Sessions stay connected."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
       <button class="tool" id="layout-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Pane layout and sessions" title="Layout and sessions (up to 8 per view)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg><span class="mono" id="pane-count">1/8</span></button>
       <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
@@ -38,6 +38,7 @@
 
   <div class="main">
     <div class="term-wrap">
+      <div class="term-col">
       <div class="terms" id="terms">
         <div class="page acct" id="page-account" hidden>
   <div class="acct-wrap">
@@ -197,6 +198,34 @@
           <p>Pick a host from the sidebar to open a terminal.</p>
         </div>
       </div>
+      <section class="ai-panel" id="ai-panel" aria-label="Ask AI" hidden>
+        <form class="ai-bar" id="ai-form">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>
+          <input id="ai-prompt" maxlength="4000" autocomplete="off" required placeholder="Describe what you want to do" aria-label="What would you like to do?">
+          <button class="btn sm" type="submit" id="ai-submit">Suggest</button>
+          <button class="tool" type="button" id="ai-close" aria-label="Close Ask AI" title="Close (Esc)">×</button>
+        </form>
+        <div class="ai-opts">
+          <label><input type="checkbox" id="ai-ctx"> Include host context</label>
+          <label><input type="checkbox" id="ai-out"> Include last few lines of terminal output</label>
+          <span class="ai-chip" id="ai-chip" hidden></span>
+        </div>
+        <div class="ai-preview" id="ai-preview" hidden>
+          <small class="ai-warn">This text is sent to the AI service. It may contain secrets such as tokens or passwords, so check it first.</small>
+          <pre id="ai-preview-text"></pre>
+        </div>
+        <p class="ai-note" id="ai-message" role="status">Your request goes to the configured AI service. Nothing is run for you.</p>
+        <div class="ai-answer" id="ai-answer" hidden>
+          <pre class="ai-cmd" id="ai-cmd"></pre>
+          <div class="ai-answer-actions">
+            <button class="btn ghost sm" type="button" id="ai-copy">Copy</button>
+            <button class="btn ghost sm" type="button" id="ai-insert">Insert at prompt</button>
+          </div>
+          <p id="ai-explain"></p>
+          <ul class="ai-risks" id="ai-risks"></ul>
+        </div>
+      </section>
+      </div>
       <aside class="drawer" id="drawer" aria-label="Session details">
         <div class="drawer-body">
           <div class="drawer-head"><h5>Session</h5></div>
@@ -262,7 +291,7 @@
   <form id="ai-settings-form">
     <h3>AI suggestions</h3>
     <p>Connect Shellport to a LiteLLM service. Disabled by default.</p>
-    <div class="ai-warning"><strong>Before enabling:</strong> User prompts are sent to this LiteLLM service and may be forwarded to an external model provider. Prompts can contain sensitive information. The service and provider may retain data, and usage may incur charges. Review their privacy and retention policies. HTTP connections send prompts and the gateway key without transport encryption; use HTTPS for remote services.</div>
+    <div class="ai-warning"><strong>Before enabling:</strong> User prompts are sent to this LiteLLM service, along with host details (operating system, shell, architecture and username) and recent terminal output when a user chooses to include them, and may be forwarded to an external model provider. Prompts and terminal output can contain sensitive information, including secrets. The service and provider may retain data, and usage may incur charges. Review their privacy and retention policies. HTTP connections send prompts and the gateway key without transport encryption; use HTTPS for remote services.</div>
     <label><input type="checkbox" id="ai-enabled"> Enable suggestions</label>
     <label>LiteLLM base URL <input id="ai-url" type="url" placeholder="http://litellm:4000/v1" maxlength="2048"></label>
     <label>Model name <input id="ai-model" maxlength="256" autocomplete="off"></label>
@@ -270,17 +299,6 @@
     <label><input type="checkbox" id="ai-ack"> I understand and accept the data sharing and cost risks.</label>
     <p id="ai-settings-message" role="status"></p>
     <div class="ai-actions"><button class="btn ghost" type="button" id="ai-settings-close">Cancel</button><button class="btn" type="submit">Save</button></div>
-  </form>
-</dialog>
-<dialog id="ai-dialog" class="ai-dialog">
-  <form id="ai-form">
-    <h3>Ask AI</h3>
-    <p>Your request is sent to the configured LiteLLM service and may be shared with its model provider. Review suggestions before running them.</p>
-    <label>What would you like to do? <textarea id="ai-prompt" maxlength="4000" rows="4" required></textarea></label>
-    <div class="ai-actions"><button class="btn ghost" type="button" id="ai-close">Close</button><button class="btn" type="submit" id="ai-submit">Suggest</button></div>
-    <p id="ai-message" role="status"></p>
-    <pre id="ai-result" class="ai-result" hidden></pre>
-    <button class="btn ghost" id="ai-copy" type="button" hidden>Copy suggestion</button>
   </form>
 </dialog>
 </body>
