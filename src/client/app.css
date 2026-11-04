@@ -496,4 +496,22 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .ai-dialog input:not([type=checkbox]), .ai-dialog textarea { width: 100%; color: inherit; background: #0b0e13; border: 1px solid #667085; border-radius: 6px; padding: 8px; }
 .ai-warning { border-left: 3px solid #e9a63a; padding: 10px; background: #e9a63a1c; }
 .ai-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.ai-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; background: #0b0e13; padding: 12px; border-radius: 6px; }
+.term-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.term-col .terms { min-height: 0; }
+.ai-panel { flex: none; border-top: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 13px; padding: 8px 12px; display: grid; gap: 6px; max-height: 45%; overflow: auto; }
+.ai-panel[hidden] { display: none; }
+.ai-bar { display: flex; align-items: center; gap: 8px; color: var(--accent); }
+.ai-bar input { flex: 1; min-width: 0; color: var(--fg); background: var(--term-bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+.ai-opts { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; color: var(--muted); }
+.ai-opts label { display: flex; gap: 6px; align-items: center; }
+.ai-chip { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
+.ai-preview pre, .ai-cmd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: var(--term-bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.ai-preview pre { max-height: 120px; overflow: auto; }
+.ai-warn { display: block; color: #e9a63a; margin-bottom: 4px; }
+.ai-note, .ai-answer p { margin: 0; color: var(--muted); }
+.ai-answer { display: grid; gap: 6px; }
+.ai-answer-actions { display: flex; gap: 8px; }
+.ai-answer-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.ai-risks { margin: 0; padding-left: 18px; color: #e9a63a; }
+.ai-risks:empty { display: none; }
+#ai-open.on { color: var(--accent); }

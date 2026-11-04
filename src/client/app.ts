@@ -1,5 +1,5 @@
 import "./app.css";
-import { initAi } from "./ai.js";
+import { initAi, type HostContext } from "./ai.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -43,6 +43,7 @@ interface Pane {
   pendingSave?: Map<string, string>;
   diagnostic?: Diagnostic;
   cancelled?: boolean;
+  context?: HostContext;
 }
 
 type Dir = "row" | "col";
@@ -987,6 +988,12 @@ function connect(pane: Pane) {
       if (msg.retry && pane.tab === active) loadSignins(pane.host.id);
       return;
     }
+    if (msg.t === "context") {
+      const { os, shell, arch, username } = msg;
+      pane.context = { os, shell, arch, username };
+      if (pane.tab === active) ai?.refresh();
+      return;
+    }
     if (msg.t === "error") {
       pane.term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
       if (!connected && msg.diagnostic && typeof msg.message === "string") {
@@ -1090,6 +1097,7 @@ function activate(tab: Tab) {
   active = tab;
   renderAll();
   applyMode();
+  ai?.refresh();
 }
 
 function closeTab(tab: Tab) {
@@ -1212,6 +1220,7 @@ $("keys").innerHTML = [
   ["Alt Shift ← / →", "Previous / next session in the view"],
   ["Alt Shift W", "Close session"],
   ["Alt Shift L", "Lock the screen"],
+  ["Alt Shift A", "Ask AI (when enabled)"],
 ].map(([k, v]) => `<div class="kb"><kbd>${k}</kbd><span>${v}</span></div>`).join("");
 $("rail-toggle").title = `Toggle sidebar (${TERM_MOD} B)`;
 
@@ -1248,11 +1257,33 @@ function handleTermKey(e: KeyboardEvent, pane: Pane): boolean {
 }
 
 let lock: ReturnType<typeof initLock> | undefined;
+let ai: ReturnType<typeof initAi> | undefined;
+
+function aiTarget() {
+  const t = shown();
+  if (!t || t.mode !== "term") return undefined;
+  const p = t.focus;
+  return {
+    context: () => p.context,
+    output: () => {
+      const buf = p.term.buffer.active;
+      let end = buf.length;
+      while (end > 0 && !buf.getLine(end - 1)?.translateToString(true)) end--;
+      const lines: string[] = [];
+      for (let i = Math.max(0, end - 15); i < end; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+      return lines.join("\n");
+    },
+    connected: () => p.state === "connected",
+    insert: (text: string) => p.term.paste(text),
+    focus: () => p.term.focus(),
+  };
+}
 
 function runShortcut(e: KeyboardEvent, primary: boolean): boolean {
   const k = e.key.toLowerCase();
   if (lock?.isLocked()) return false;
   if (e.altKey && e.shiftKey && e.code === "KeyL") lock?.lock();
+  else if (e.altKey && e.shiftKey && e.code === "KeyA") ai?.toggle();
   else if (primary && k === "b") toggleRail();
   else if (primary && k === "k") focusSearch();
   else if (e.altKey && e.shiftKey && e.code === "KeyD") { const t = shown(); if (t) addSession(t.focus.host); }
@@ -1576,7 +1607,7 @@ function renderMe(me: Me) {
   $("acct-server-card").hidden = !me.sealable && !me.admin;
   $("acct-nav-server").hidden = $("acct-server-card").hidden;
   isAdmin = !!me.admin;
-  initAi(isAdmin);
+  ai = initAi(isAdmin, aiTarget);
   $("acct-audit-sec").hidden = !me.admin;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;
