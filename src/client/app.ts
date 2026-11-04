@@ -1,4 +1,5 @@
 import "./app.css";
+import { initAi } from "./ai.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -1575,6 +1576,7 @@ function renderMe(me: Me) {
   $("acct-server-card").hidden = !me.sealable && !me.admin;
   $("acct-nav-server").hidden = $("acct-server-card").hidden;
   isAdmin = !!me.admin;
+  initAi(isAdmin);
   $("acct-audit-sec").hidden = !me.admin;
   $("me-role").hidden = !me.admin;
   $("add-host").hidden = !me.canAddHosts;

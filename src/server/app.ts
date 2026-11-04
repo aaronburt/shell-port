@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { aiRoutes } from "./ai.js";
+import type { StoreIoLike } from "./config.js";
 import http from "node:http";
 import path from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
@@ -37,6 +39,7 @@ export interface AppOptions {
   timing?: TerminalTiming;
   onSeal?: () => void;
   hostStore?: HostStore;
+  aiStore?: StoreIoLike;
   probeHostKey?: KeyProbe;
   passkeyStore?: PasskeyStore;
   auditLog?: AuditLog;
@@ -132,6 +135,12 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   const requireAdmin = (_req: Request, res: Response, next: NextFunction) =>
     isAdmin(cfg, who(res.locals.session)) ? next() : res.status(403).json({ error: "forbidden" });
+
+  const ai = aiRoutes(opts.aiStore);
+  app.get("/api/ai/status", requireSession, ai.status);
+  app.get("/api/ai/settings", requireSession, requireAdmin, ai.settings);
+  app.put("/api/ai/settings", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "8kb" }), ai.save);
+  app.post("/api/ai/suggest", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.suggest);
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
 

@@ -17,6 +17,7 @@
     </div>
     <div class="tab-scroll" id="tab-scroll"></div>
     <div class="tab-tools">
+      <button class="btn ghost sm" id="ai-open" type="button" hidden>Ask AI</button>
       <button class="tool" id="lock-btn" type="button" aria-label="Lock screen" title="Lock screen (Alt Shift L). Sessions stay connected."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
       <button class="tool" id="layout-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Pane layout and sessions" title="Layout and sessions (up to 8 per view)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg><span class="mono" id="pane-count">1/8</span></button>
       <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
@@ -129,6 +130,7 @@
       <div class="acct-group" id="acct-server">
         <section class="acct-card" id="acct-server-card">
           <div class="acct-card-head"><h5>Server</h5></div>
+          <div class="acct-row" id="ai-admin-row" hidden><div class="acct-label"><strong>AI suggestions</strong><small>Configure a LiteLLM service</small></div><button class="btn ghost" id="ai-settings-open" type="button">Configure</button></div>
           <div class="acct-row" id="acct-audit-sec" hidden>
             <div class="acct-label"><strong>Audit log</strong></div>
             <button class="btn ghost" id="acct-audit" type="button">Open</button>
@@ -256,5 +258,30 @@
   </div>
 </section>
 <script src="/assets/app.js"></script>
+<dialog id="ai-settings" class="ai-dialog">
+  <form id="ai-settings-form">
+    <h3>AI suggestions</h3>
+    <p>Connect Shellport to a LiteLLM service. Disabled by default.</p>
+    <div class="ai-warning"><strong>Before enabling:</strong> User prompts are sent to this LiteLLM service and may be forwarded to an external model provider. Prompts can contain sensitive information. The service and provider may retain data, and usage may incur charges. Review their privacy and retention policies. HTTP connections send prompts and the gateway key without transport encryption; use HTTPS for remote services.</div>
+    <label><input type="checkbox" id="ai-enabled"> Enable suggestions</label>
+    <label>LiteLLM base URL <input id="ai-url" type="url" placeholder="http://litellm:4000/v1" maxlength="2048"></label>
+    <label>Model name <input id="ai-model" maxlength="256" autocomplete="off"></label>
+    <label>Gateway API key <input id="ai-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="Enter key; leave blank to keep existing"></label>
+    <label><input type="checkbox" id="ai-ack"> I understand and accept the data sharing and cost risks.</label>
+    <p id="ai-settings-message" role="status"></p>
+    <div class="ai-actions"><button class="btn ghost" type="button" id="ai-settings-close">Cancel</button><button class="btn" type="submit">Save</button></div>
+  </form>
+</dialog>
+<dialog id="ai-dialog" class="ai-dialog">
+  <form id="ai-form">
+    <h3>Ask AI</h3>
+    <p>Your request is sent to the configured LiteLLM service and may be shared with its model provider. Review suggestions before running them.</p>
+    <label>What would you like to do? <textarea id="ai-prompt" maxlength="4000" rows="4" required></textarea></label>
+    <div class="ai-actions"><button class="btn ghost" type="button" id="ai-close">Close</button><button class="btn" type="submit" id="ai-submit">Suggest</button></div>
+    <p id="ai-message" role="status"></p>
+    <pre id="ai-result" class="ai-result" hidden></pre>
+    <button class="btn ghost" id="ai-copy" type="button" hidden>Copy suggestion</button>
+  </form>
+</dialog>
 </body>
 </html>

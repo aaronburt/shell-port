@@ -134,6 +134,12 @@ To pin a host key, run `ssh-keyscan <host> | ssh-keygen -lf -` and copy the `SHA
 
 **Setup wizard.** If Shellport starts without a vault or legacy `config.json`, it opens a setup wizard instead of the app and prints a one-time **setup code** in its server log (`docker compose logs shellport`). Enter that code to configure the server, GitHub OAuth, session limits and SSH hosts. The wizard can also generate TOTP secrets with QR codes, check the config against the schema, and preview the configuration. Setup requires HTTPS or an address on localhost. All setup APIs require the code; it stops working after a successful save, and restarting setup generates a new one. Native setup listens on loopback by default; set `HOST` to expose it elsewhere. The Docker image listens on all container interfaces and the local compose file publishes it on loopback. You can force the wizard with `SHELLPORT_SETUP=1`. Behind an HTTPS reverse proxy, set `SHELLPORT_TRUST_PROXY` to the number of proxy hops; the supplied Caddy deployment sets it to `1`.
 
+## AI command suggestions
+
+AI suggestions are disabled by default. An administrator can open **Account → Server → AI suggestions**, acknowledge the data-sharing notice, and configure a LiteLLM gateway URL, model alias, and gateway API key. The key is stored in the encrypted vault. For a LiteLLM service on the same Docker network, the base URL can be `http://litellm:4000/v1`; for a remote gateway use its HTTPS URL ending in `/v1`. Shellport does not deploy LiteLLM. Configure and secure the gateway separately, including its upstream provider, logging and spending controls. Use TLS for remote connections; HTTP sends prompts and the gateway key without transport encryption.
+
+When enabled, signed-in users can request a suggestion using **Ask AI** and copy the returned text. Only the text entered by the user is sent; terminal output is not collected automatically. LiteLLM and its upstream provider may log or retain prompts and incur charges. Users must review suggestions: models can produce incorrect or destructive commands. Shellport never executes or inserts a suggested command.
+
 ## Required encrypted vault
 
 Sealed mode keeps your configuration and SSH keys encrypted on disk. Instead of `config.json` and `.env`, Shellport has one file, `vault.sealed`, and it starts "sealed": the only page it serves is an unseal screen. Someone who knows the passphrase unlocks it in the browser, after which the usual GitHub sign-in and TOTP code apply. Nothing is ever written to disk in plain text.

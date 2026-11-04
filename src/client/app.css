@@ -486,3 +486,14 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .kb:nth-child(odd) { border-right: 0; }
   .acct-head { flex-wrap: wrap; }
 }
+
+.ai-dialog { color: var(--text, #e5e7eb); background: var(--surface, #171b22); border: 1px solid #667085; border-radius: 12px; width: min(560px, calc(100vw - 32px)); padding: 24px; }
+.ai-dialog::backdrop { background: #000a; }
+.ai-dialog form { display: grid; gap: 12px; }
+.ai-dialog h3, .ai-dialog p { margin: 0; }
+.ai-dialog label { display: grid; gap: 5px; }
+.ai-dialog label:has(input[type=checkbox]) { display: flex; align-items: baseline; }
+.ai-dialog input:not([type=checkbox]), .ai-dialog textarea { width: 100%; color: inherit; background: #0b0e13; border: 1px solid #667085; border-radius: 6px; padding: 8px; }
+.ai-warning { border-left: 3px solid #e9a63a; padding: 10px; background: #e9a63a1c; }
+.ai-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ai-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; background: #0b0e13; padding: 12px; border-radius: 6px; }
