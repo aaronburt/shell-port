@@ -310,7 +310,6 @@
       <label><input type="checkbox" id="ai-investigate"> Let the AI look at the connected machine. Off by default.</label>
       <p>The AI can ask for read-only commands. Users approve each command and see its output before it is sent. Commands run through a separate SSH channel and only if they pass a read-only check on the server.</p>
       <div class="ai-pair">
-        <label>Max steps per question <select id="ai-max-steps"><option>3</option><option selected>5</option><option>8</option></select></label>
         <label>Seconds per command <select id="ai-timeout"><option>5</option><option selected>15</option><option>30</option></select></label>
       </div>
       <div class="ai-warning"><strong>Extra risk:</strong> command output can contain secrets such as configuration files, environment values and logs. Whatever a user approves is sent to the LiteLLM service and possibly its model provider. Every question, command and send is written to the audit log.</div>

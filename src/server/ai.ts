@@ -6,9 +6,9 @@ import type { TerminalInfo } from "./proxy.js";
 import type { AuditKind } from "./auditlog.js";
 import { readOnlyCheck } from "./investigate.js";
 
-interface AiSettings { enabled: boolean; baseUrl: string; model: string; apiKey: string; investigate: boolean; maxSteps: number; timeoutSec: number }
-const empty: AiSettings = { enabled: false, baseUrl: "", model: "", apiKey: "", investigate: false, maxSteps: 5, timeoutSec: 15 };
-const STEP_CHOICES = [3, 5, 8];
+interface AiSettings { enabled: boolean; baseUrl: string; model: string; apiKey: string; investigate: boolean; timeoutSec: number }
+const empty: AiSettings = { enabled: false, baseUrl: "", model: "", apiKey: "", investigate: false, timeoutSec: 15 };
+const HISTORY_CEILING = 30;
 const TIMEOUT_CHOICES = [5, 15, 30];
 
 export interface AiDeps {
@@ -102,14 +102,14 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
     try {
       const s = read();
       const on = !!store && s.enabled === true;
-      res.json({ enabled: on, investigate: on && s.investigate === true && !!deps, maxSteps: s.maxSteps, timeoutSec: s.timeoutSec });
+      res.json({ enabled: on, investigate: on && s.investigate === true && !!deps, timeoutSec: s.timeoutSec });
     }
     catch { res.status(503).json({ error: "settings_unavailable" }); }
   };
   const settings: RequestHandler = (_req, res) => {
     try {
       const s = read();
-      res.json({ available: !!store, enabled: s.enabled, baseUrl: s.baseUrl, model: s.model, hasKey: !!s.apiKey, investigate: s.investigate === true, maxSteps: s.maxSteps, timeoutSec: s.timeoutSec });
+      res.json({ available: !!store, enabled: s.enabled, baseUrl: s.baseUrl, model: s.model, hasKey: !!s.apiKey, investigate: s.investigate === true, timeoutSec: s.timeoutSec });
     } catch { res.status(503).json({ error: "settings_unavailable" }); }
   };
   const save: RequestHandler = (req, res) => {
@@ -119,10 +119,9 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
       return res.status(400).json({ error: "invalid_settings" });
     if (b.enabled && b.acknowledge !== true) return res.status(400).json({ error: "acknowledgement_required" });
     const investigate = b.investigate === true;
-    const maxSteps = b.maxSteps === undefined ? empty.maxSteps : b.maxSteps;
     const timeoutSec = b.timeoutSec === undefined ? empty.timeoutSec : b.timeoutSec;
     if (b.investigate !== undefined && typeof b.investigate !== "boolean") return res.status(400).json({ error: "invalid_settings" });
-    if (!STEP_CHOICES.includes(maxSteps) || !TIMEOUT_CHOICES.includes(timeoutSec)) return res.status(400).json({ error: "invalid_settings" });
+    if (!TIMEOUT_CHOICES.includes(timeoutSec)) return res.status(400).json({ error: "invalid_settings" });
     if (b.enabled && investigate && b.acknowledgeInvestigate !== true) return res.status(400).json({ error: "acknowledgement_required" });
     let baseUrl = b.baseUrl.trim().replace(/\/+$/, "");
     if (b.enabled || baseUrl) {
@@ -135,11 +134,11 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
     try {
       const raw = store.read();
       const old = raw.ai && typeof raw.ai === "object" ? raw.ai as Partial<AiSettings> : empty;
-      const next = { enabled: b.enabled, baseUrl, model: b.model.trim(), apiKey: b.apiKey || old.apiKey || "", investigate: b.enabled && investigate, maxSteps, timeoutSec };
+      const next = { enabled: b.enabled, baseUrl, model: b.model.trim(), apiKey: b.apiKey || old.apiKey || "", investigate: b.enabled && investigate, timeoutSec };
       if (next.enabled && (!next.baseUrl || !next.model || !next.apiKey)) return res.status(400).json({ error: "missing_settings" });
       raw.ai = next;
       store.write(raw);
-      deps?.trail("ai_settings", res.locals.session, req.ip ?? "", "", !next.enabled ? "AI turned off" : next.investigate ? `AI on, Investigate on (${maxSteps} steps, ${timeoutSec} s)` : "AI on, Investigate off");
+      deps?.trail("ai_settings", res.locals.session, req.ip ?? "", "", !next.enabled ? "AI turned off" : next.investigate ? `AI on, Investigate on (${timeoutSec} s per command)` : "AI on, Investigate off");
       res.json({ ok: true });
     } catch { res.status(500).json({ error: "save_failed" }); }
   };
@@ -200,7 +199,7 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
     const prompt = body.prompt;
     if (typeof prompt !== "string" || !prompt.trim() || prompt.length > TEXT_MAX) return res.status(400).json({ error: "invalid_prompt" });
     const rawHistory = body.history === undefined ? [] : body.history;
-    if (!Array.isArray(rawHistory) || rawHistory.length > cfg.maxSteps) return res.status(400).json({ error: "invalid_history" });
+    if (!Array.isArray(rawHistory) || rawHistory.length > HISTORY_CEILING) return res.status(400).json({ error: "invalid_history" });
     const history: HistoryStep[] = [];
     for (const h of rawHistory) {
       const command = plain(h?.command, 500);
@@ -227,7 +226,7 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
         : "This command was refused because it is not on the read-only list. Choose a different read-only command or give your final answer.";
       messages.push({ role: "user", content: result });
     }
-    const final = history.length >= cfg.maxSteps;
+    const final = history.length >= HISTORY_CEILING;
     if (final) messages.push({ role: "user", content: "No more commands may be requested. Reply with action 'final' now, based on what you have." });
     const result = await gateway(cfg, user, messages, "investigation_step", STEP_SCHEMA);
     if ("error" in result) return res.status(502).json({ error: result.error });
@@ -240,7 +239,7 @@ export function aiRoutes(store?: StoreIoLike, deps?: AiDeps) {
       if (reason) deps.trail("ai_command_denied", user, ip, term.hostName, command.slice(0, 200));
       return res.json({ type: "command", command, why, allowed: !reason, ...(reason ? { reason } : {}) });
     }
-    res.json({ type: "final", ...(data ? parseSuggestion(result.content) : { raw: result.content }), limit: final });
+    res.json({ type: "final", ...(data ? parseSuggestion(result.content) : { raw: result.content }) });
   };
   const run = async (req: Request, res: Response) => {
     const user: UserSession = res.locals.session;

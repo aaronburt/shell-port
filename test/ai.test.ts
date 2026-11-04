@@ -113,11 +113,11 @@ test("Investigate mode is off until an admin enables and acknowledges it", async
   try {
     const settings = { enabled: true, baseUrl: "http://127.0.0.1:9/v1", model: "m", apiKey: "k", acknowledge: true };
     assert.equal((await call("/api/ai/settings", "PUT", { ...settings, investigate: true })).status, 400);
-    assert.equal((await call("/api/ai/settings", "PUT", { ...settings, investigate: true, acknowledgeInvestigate: true, maxSteps: 99 })).status, 400);
+    assert.equal((await call("/api/ai/settings", "PUT", { ...settings, investigate: true, acknowledgeInvestigate: true, timeoutSec: 99 })).status, 400);
     assert.equal((await call("/api/ai/investigate", "POST", { terminalId: "x", prompt: "why" })).status, 404);
-    assert.equal((await call("/api/ai/settings", "PUT", { ...settings, investigate: true, acknowledgeInvestigate: true, maxSteps: 3, timeoutSec: 5 })).status, 200);
+    assert.equal((await call("/api/ai/settings", "PUT", { ...settings, investigate: true, acknowledgeInvestigate: true, timeoutSec: 5 })).status, 200);
     const status = await (await fetch(`${base}/api/ai/status`, { headers })).json();
-    assert.deepEqual(status, { enabled: true, investigate: true, maxSteps: 3, timeoutSec: 5 });
+    assert.deepEqual(status, { enabled: true, investigate: true, timeoutSec: 5 });
     assert.equal((await call("/api/ai/investigate", "POST", { terminalId: "missing", prompt: "why" })).status, 404);
     assert.equal((await call("/api/ai/investigate/run", "POST", { terminalId: "missing", command: "df" })).status, 404);
     assert.equal((await call("/api/ai/settings", "PUT", { ...settings })).status, 200);

@@ -144,7 +144,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
   app.get("/api/ai/settings", requireSession, requireAdmin, ai.settings);
   app.put("/api/ai/settings", requireSession, requireAdmin, requireSameOrigin, express.json({ limit: "8kb" }), ai.save);
   app.post("/api/ai/suggest", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.suggest);
-  app.post("/api/ai/investigate", requireSession, requireSameOrigin, express.json({ limit: "64kb" }), ai.investigate);
+  app.post("/api/ai/investigate", requireSession, requireSameOrigin, express.json({ limit: "256kb" }), ai.investigate);
   app.post("/api/ai/investigate/run", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.run);
   app.post("/api/ai/investigate/stop", requireSession, requireSameOrigin, express.json({ limit: "8kb" }), ai.stop);
 
