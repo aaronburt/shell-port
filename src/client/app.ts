@@ -20,6 +20,9 @@ interface Signin {
 type State = "connecting" | "connected" | "closed";
 interface Info { id?: string; files?: boolean; host: string; user: string; auth: string; route?: string; cipher: string; hostKey: string; since: string; recording?: boolean }
 
+type FailureStage = "connection" | "host-key" | "authentication" | "shell" | "configuration" | "passphrase" | "recording";
+interface Diagnostic { stage: FailureStage; role: "bastion" | "target"; message: string }
+
 interface Pane {
   id: string;
   tab: Tab;
@@ -37,6 +40,8 @@ interface Pane {
   usedSaved?: string;
   asking?: string;
   pendingSave?: Map<string, string>;
+  diagnostic?: Diagnostic;
+  cancelled?: boolean;
 }
 
 type Dir = "row" | "col";
@@ -941,6 +946,7 @@ function typePassphrase(pane: Pane, data: string) {
   } else if (action === "cancel") {
     pane.passphrase = undefined;
     pane.term.write("\r\n\x1b[90mCancelled.\x1b[0m\r\n");
+    pane.cancelled = true;
     pane.ws?.close();
   } else {
     pane.passphrase = value;
@@ -953,6 +959,8 @@ function connect(pane: Pane) {
   pane.usedSaved = undefined;
   pane.asking = undefined;
   pane.pendingSave = undefined;
+  pane.diagnostic = undefined;
+  pane.cancelled = false;
   pane.state = "connecting";
   pane.info = undefined;
   if (pane.tab.focus === pane) { pane.tab.files.reset(); pane.tab.filesFor = undefined; }
@@ -965,6 +973,7 @@ function connect(pane: Pane) {
   const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
   ws.binaryType = "arraybuffer";
   pane.ws = ws;
+  let connected = false;
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ t: "resize", cols: pane.term.cols, rows: pane.term.rows }));
@@ -977,12 +986,19 @@ function connect(pane: Pane) {
       if (msg.retry && pane.tab === active) loadSignins(pane.host.id);
       return;
     }
-    if (msg.t === "error") { pane.term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`); return; }
+    if (msg.t === "error") {
+      pane.term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+      if (!connected && msg.diagnostic && typeof msg.message === "string") {
+        pane.diagnostic = { ...msg.diagnostic, message: msg.message };
+      }
+      return;
+    }
     if (msg.t === "status") {
       pane.state = msg.state;
       if (msg.info) pane.info = msg.info;
       if (msg.reason) pane.reason = msg.reason;
       if (msg.state === "connected") {
+        connected = true;
         pane.fit.fit();
         const pending = pane.pendingSave;
         pane.pendingSave = undefined;
@@ -1006,19 +1022,51 @@ function connect(pane: Pane) {
       pane.reason ||= ev.reason || (ev.code === 1006 ? "Could not reach the Shellport server, or you were signed out" : "Disconnected");
     }
     pane.term.write(`\r\n\x1b[90m[${pane.reason}]\x1b[0m\r\n`);
-    showBanner(pane);
+    showBanner(pane, !connected && !pane.cancelled);
     leaveFilesIfGone(pane.tab);
     refresh(pane);
     if (ev.code === 1006) fetch("/api/me").then((r) => { if (r.status === 401) location.reload(); }).catch(() => {});
   };
 }
 
-function showBanner(pane: Pane) {
+const DIAGNOSTIC_COPY: Record<FailureStage, { label: string; next: string }> = {
+  connection: { label: "Reach the SSH server", next: "Check the address, port, network access and any bastion settings." },
+  "host-key": { label: "Check the host key", next: "Ask an administrator to verify the host key independently before updating the pinned fingerprint." },
+  authentication: { label: "Authenticate", next: "Check the configured SSH username and credentials with an administrator." },
+  shell: { label: "Open a shell", next: "Check that this SSH account is allowed to open an interactive shell." },
+  configuration: { label: "Load connection settings", next: "Ask an administrator to check the host's SSH configuration and credentials." },
+  passphrase: { label: "Unlock the SSH key", next: "Check the key passphrase and try again. If attempts are throttled, wait before retrying." },
+  recording: { label: "Start session recording", next: "Ask an administrator to check recording storage and permissions." },
+};
+
+function showBanner(pane: Pane, failed: boolean) {
   if (pane.el.querySelector(".banner")) return;
   const b = document.createElement("div");
   b.className = "banner";
-  b.innerHTML = `<span>Disconnected</span><button class="btn">Reconnect</button>`;
-  b.querySelector("button")!.onclick = () => { connect(pane); pane.term.focus(); };
+  if (failed) {
+    b.classList.add("diagnostic");
+    b.setAttribute("role", "alert");
+    const d = pane.diagnostic;
+    const copy = d && DIAGNOSTIC_COPY[d.stage];
+    const hop = d?.role === "bastion" ? "Bastion" : "Host";
+    const label = copy ? `${hop} · ${copy.label}` : "Shellport connection";
+    const message = d?.message ?? (pane.reason === "Connection closed" || pane.reason === "Bastion connection closed"
+      ? "The SSH connection closed before a shell opened."
+      : "The connection ended before a shell opened.");
+    const next = copy?.next ?? "Check your connection and sign-in, then try again. If it continues, ask an administrator to check the server logs.";
+    b.innerHTML = `<div class="diag-heading"><span class="diag-icon" aria-hidden="true">!</span><div><strong>Connection failed</strong><div class="diag-stage"></div></div></div><p class="diag-message"></p><p class="diag-next"></p><div class="diag-actions"><button class="btn" type="button">Reconnect</button><button class="diag-dismiss" type="button">Show terminal</button></div>`;
+    b.querySelector(".diag-stage")!.textContent = label;
+    b.querySelector(".diag-message")!.textContent = message;
+    b.querySelector(".diag-next")!.textContent = next;
+    b.querySelector<HTMLButtonElement>(".diag-dismiss")!.onclick = () => {
+      b.remove();
+      showBanner(pane, false);
+      pane.term.focus();
+    };
+  } else {
+    b.innerHTML = `<span>Disconnected</span><button class="btn" type="button">Reconnect</button>`;
+  }
+  b.querySelector<HTMLButtonElement>(".btn")!.onclick = () => { connect(pane); pane.term.focus(); };
   pane.el.appendChild(b);
 }
 
