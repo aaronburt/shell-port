@@ -29,10 +29,9 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
   const idle = message.textContent ?? "";
   const modes = el("ai-modes"), modeS = el<HTMLButtonElement>("ai-mode-s"), modeI = el<HTMLButtonElement>("ai-mode-i"), opts = document.querySelector<HTMLElement>(".ai-opts")!;
   const inv = el("ai-inv"), invIntro = el("ai-inv-intro"), trail = el("ai-trail"), invCount = el("ai-inv-count"), stopBtn = el<HTMLButtonElement>("ai-inv-stop"), submit = el<HTMLButtonElement>("ai-submit");
-  const investigateOn = el<HTMLInputElement>("ai-investigate"), maxStepsSel = el<HTMLSelectElement>("ai-max-steps"), timeoutSel = el<HTMLSelectElement>("ai-timeout"), ackInv = el<HTMLInputElement>("ai-ack-investigate");
+  const investigateOn = el<HTMLInputElement>("ai-investigate"), timeoutSel = el<HTMLSelectElement>("ai-timeout"), ackInv = el<HTMLInputElement>("ai-ack-investigate");
   let available = false;
   let canInvestigate = false;
-  let maxSteps = 5;
   let timeoutSec = 15;
   let mode: "suggest" | "investigate" = "suggest";
   let run: Run | undefined;
@@ -43,7 +42,6 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
       const s = r.ok ? await r.json() : {};
       available = s.enabled === true;
       canInvestigate = available && s.investigate === true;
-      maxSteps = Number(s.maxSteps) || 5;
       timeoutSec = Number(s.timeoutSec) || 15;
     } catch { available = false; canInvestigate = false; }
     button.hidden = !available;
@@ -59,7 +57,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
       if (!r.ok) throw new Error();
       const s = await r.json();
       enabled.checked = s.enabled; url.value = s.baseUrl; model.value = s.model;
-      investigateOn.checked = s.investigate === true; maxStepsSel.value = String(s.maxSteps); timeoutSel.value = String(s.timeoutSec);
+      investigateOn.checked = s.investigate === true; timeoutSel.value = String(s.timeoutSec);
       key.placeholder = s.hasKey ? "Leave blank to keep existing key" : "Enter LiteLLM gateway key";
       if (!s.available) settingsMessage.textContent = "Settings are unavailable on this server.";
     } catch { settingsMessage.textContent = "Could not load settings."; }
@@ -71,7 +69,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
     if (enabled.checked && !ack.checked) { settingsMessage.textContent = "Please acknowledge the risks before enabling AI."; return; }
     if (enabled.checked && investigateOn.checked && !ackInv.checked) { settingsMessage.textContent = "Please acknowledge that server output will be shared before enabling Investigate."; return; }
     try {
-      const r = await fetch("/api/ai/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabled.checked, baseUrl: url.value, model: model.value, apiKey: key.value, acknowledge: ack.checked, investigate: investigateOn.checked, maxSteps: Number(maxStepsSel.value), timeoutSec: Number(timeoutSel.value), acknowledgeInvestigate: ackInv.checked }) });
+      const r = await fetch("/api/ai/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabled.checked, baseUrl: url.value, model: model.value, apiKey: key.value, acknowledge: ack.checked, investigate: investigateOn.checked, timeoutSec: Number(timeoutSel.value), acknowledgeInvestigate: ackInv.checked }) });
       if (!r.ok) { const b = await r.json(); settingsMessage.textContent = `Could not save settings (${b.error}). Check the URL, model and API key.`; return; }
       settings.close(); await refresh();
     } catch { settingsMessage.textContent = "Could not save settings."; }
@@ -102,7 +100,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
     submit.textContent = i ? "Investigate" : "Suggest";
     prompt.placeholder = i ? "What should I look into on this machine?" : "Describe what you want to do";
     if (i) {
-      invIntro.textContent = `Reads from this machine with read-only commands. You approve every command and see each output before the AI does. Commands run in a separate channel, not in your terminal (up to ${maxSteps} steps, ${timeoutSec} s each).`;
+      invIntro.textContent = `Reads from this machine with read-only commands. You approve every command and see each output before the AI does. Commands run in a separate channel, not in your terminal (${timeoutSec} s limit per command). Press Stop at any time.`;
       message.textContent = sharing;
     } else {
       message.textContent = idle;
@@ -119,7 +117,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
     submit.disabled = false; prompt.disabled = false;
   }
   function count() {
-    invCount.textContent = run ? `Step ${Math.min(Math.max(run.steps.length, 1), maxSteps)} of ${maxSteps}` : "";
+    invCount.textContent = run && run.steps.length ? `${run.steps.length} step${run.steps.length === 1 ? "" : "s"}` : "";
   }
   const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = "", cls = "") => {
     const n = document.createElement(tag);
@@ -137,7 +135,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
     const e = step.el;
     e.className = `ai-step${["ask", "running", "review"].includes(step.status) ? " cur" : ""}${step.status === "blocked" ? " blocked" : ""}`;
     const head = node("div", "", "ai-step-head");
-    head.append(node("span", `Step ${r.steps.indexOf(step) + 1} of ${maxSteps}`), node("span", step.status === "review" && step.exitCode !== null ? `Finished · exit ${step.exitCode}` : TAGS[step.status], "ai-step-tag"));
+    head.append(node("span", `Step ${r.steps.indexOf(step) + 1}`), node("span", step.status === "review" && step.exitCode !== null ? `Finished · exit ${step.exitCode}` : TAGS[step.status], "ai-step-tag"));
     const kids: HTMLElement[] = [head, node("p", step.why), node("pre", `$ ${step.command}`)];
     if (step.status === "ask") {
       kids.push(node("small", `Runs with a ${timeoutSec} s limit and 4 KB of output. Nothing is typed into your terminal.`));
@@ -205,7 +203,7 @@ export function initAi(admin: boolean, target: () => AiTarget | undefined) {
         void next(r);
         return;
       }
-      finishRun(d.limit ? "Step limit reached. This is the best suggestion from what was collected." : "Review this suggestion before using it. Nothing has been run for you.", d);
+      finishRun("Review this suggestion before using it. Nothing has been run for you.", d);
     } catch {
       if (run !== r) return;
       finishRun("Could not reach the AI service. Check that AI is enabled and the LiteLLM service is available.");
