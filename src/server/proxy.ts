@@ -33,6 +33,13 @@ export interface TerminalInfo {
 }
 
 type Role = "bastion" | "target";
+type FailureStage = "connection" | "host-key" | "authentication" | "shell" | "configuration" | "passphrase" | "recording";
+
+function errorStage(err: Error & { level?: string }, mismatch: boolean): FailureStage {
+  if (mismatch) return "host-key";
+  if (err.level === "client-authentication") return "authentication";
+  return "connection";
+}
 
 interface Hop {
   role: Role;
@@ -81,6 +88,8 @@ export function openTerminal(opts: {
 }): TerminalInfo {
   const { ws, cfg, host, route, session, ip } = opts;
   const send = (msg: object) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+  const failure = (message: string, stage: FailureStage, role: Role = "target") =>
+    send({ t: "error", message, diagnostic: { stage, role } });
   const started = Date.now();
   let lastActivity = Date.now();
   let stream: ClientChannel | undefined;
@@ -182,13 +191,15 @@ export function openTerminal(opts: {
 
   let targetHop: Hop;
   let bastionHop: Hop | undefined;
+  let loadingRole: Role = route ? "bastion" : "target";
   try {
     bastionHop = route && bastion ? hopFor("bastion", route, bastion) : undefined;
+    loadingRole = "target";
     targetHop = hopFor("target", host, ssh);
   } catch (e) {
     audit("terminal.error", { ...auditFor(host), error: (e as Error).message });
     trail("ssh_failed", "Credentials are misconfigured on the server");
-    send({ t: "error", message: "This host's credentials are misconfigured on the server." });
+    failure("SSH credentials are misconfigured on the server.", "configuration", loadingRole);
     queueMicrotask(() => close("Configuration error"));
     return handle;
   }
@@ -204,7 +215,7 @@ export function openTerminal(opts: {
     mark("authMs");
     ssh.shell({ term: "xterm-256color", ...size }, (err, s) => {
       if (err) {
-        send({ t: "error", message: "The host refused to open a shell." });
+        failure("The host refused to open a shell.", "shell");
         return close("Shell refused");
       }
       stream = s;
@@ -216,7 +227,7 @@ export function openTerminal(opts: {
         } catch (e) {
           audit("terminal.recording_failed", { ...auditFor(host), error: (e as Error).message });
           trail("recording_failed", "Recording could not start, session not opened");
-          send({ t: "error", message: "Session recording is unavailable, so the session was not opened." });
+          failure("Session recording is unavailable, so the session was not opened.", "recording");
           return close("Recording unavailable");
         }
       }
@@ -274,7 +285,7 @@ export function openTerminal(opts: {
     if (closed) return;
     audit("terminal.error", { ...auditFor(host), error: err.message });
     trail("ssh_failed", friendlyError(err, mismatch));
-    send({ t: "error", message: friendlyError(err, mismatch) });
+    failure(friendlyError(err, mismatch), errorStage(err, mismatch));
     close("Connection failed");
   });
   ssh.on("close", () => close("Connection closed"));
@@ -289,7 +300,7 @@ export function openTerminal(opts: {
       if (closed) return;
       audit("terminal.error", { ...auditFor(route), error: err.message });
       trail("ssh_failed", friendlyError(err, mismatch), route);
-      send({ t: "error", message: `Bastion ${route.name}: ${friendlyError(err, mismatch)}` });
+      failure(`Bastion ${route.name}: ${friendlyError(err, mismatch)}`, errorStage(err, mismatch), "bastion");
       close("Bastion connection failed");
     });
     bastion.on("close", () => close("Bastion connection closed"));
@@ -338,7 +349,7 @@ export function openTerminal(opts: {
     if (restartTimer) {
       clearTimeout(passphraseTimer);
       passphraseTimer = setTimeout(() => {
-        send({ t: "error", message: "No passphrase was entered in time." });
+        failure("No passphrase was entered in time.", "passphrase", hop.role);
         close("Passphrase timeout");
       }, opts.timing?.passphraseWaitMs ?? PASSPHRASE_WAIT_MS);
     }
@@ -351,7 +362,7 @@ export function openTerminal(opts: {
     trail("passphrase_failed", `Attempt ${hop.tries} of ${PASSPHRASE_TRIES}`, hop.host);
     opts.activity.add({ kind: "passphrase_failed", githubId: session.githubId, ip, host: hop.host.id });
     if (hop.tries >= PASSPHRASE_TRIES) {
-      send({ t: "error", message: "Incorrect passphrase." });
+      failure("Incorrect passphrase.", "passphrase", hop.role);
       return close("Incorrect passphrase");
     }
     askPassphrase(hop, true, restartTimer);
@@ -363,7 +374,7 @@ export function openTerminal(opts: {
     if (!opts.passphraseLimiter.hit(`${session.githubId}:${hop.host.id}`)) {
       audit("terminal.passphrase_throttled", auditFor(hop.host));
       trail("ssh_failed", "Too many incorrect passphrases, throttled", hop.host);
-      send({ t: "error", message: "Too many incorrect passphrases. Try again later." });
+      failure("Too many incorrect passphrases. Try again later.", "passphrase", hop.role);
       return close("Passphrase attempts throttled");
     }
     if (!value || value.length > MAX_PASSPHRASE_LEN) return failPassphrase(hop, false);
@@ -391,7 +402,7 @@ export function openTerminal(opts: {
       if (err || !channel) {
         audit("terminal.error", { ...auditFor(hop.host), error: `tunnel: ${err?.message ?? "no channel"}` });
         trail("ssh_failed", `Could not reach ${hop.host.name} through ${through.route.name}`, hop.host);
-        send({ t: "error", message: `Could not reach ${hop.host.name} through ${through.route.name}.` });
+        failure(`Could not reach ${hop.host.name} through ${through.route.name}.`, "connection", "target");
         return close("Could not reach the host through the bastion");
       }
       connectClient(hop, fromPassphrase, channel);
@@ -407,7 +418,7 @@ export function openTerminal(opts: {
       hop.auth.conn.passphrase = undefined;
       if (fromPassphrase && /^Cannot parse privateKey/.test((e as Error).message)) return failPassphrase(hop, true);
       audit("terminal.error", { ...auditFor(hop.host), error: (e as Error).message });
-      send({ t: "error", message: "SSH connection failed." });
+      failure("SSH connection failed.", "configuration", hop.role);
       return close("Connection failed");
     }
     if (hop.role === "target") mark(fromPassphrase ? "decryptMs" : "connectCallMs");

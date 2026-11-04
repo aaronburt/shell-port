@@ -131,6 +131,17 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .pane .xterm .xterm-viewport { background: var(--term-bg) !important; }
 .pane .banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border-radius: 8px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(0,0,0,.4); font-size: 13px; max-width: calc(100% - 32px); }
 .pane .banner .btn { padding: 6px 12px; }
+.pane .banner.diagnostic { display: block; width: min(440px, calc(100% - 24px)); max-width: none; max-height: calc(100% - 44px); overflow: auto; padding: 16px; line-height: 1.45; }
+.diag-heading { display: flex; align-items: flex-start; gap: 10px; }
+.diag-heading strong { color: var(--fg); font-size: 15px; }
+.diag-icon { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--bad); border-radius: 50%; color: var(--bad); font-weight: 700; }
+.diag-stage { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.diagnostic p { margin: 12px 0 0; overflow-wrap: anywhere; }
+.diagnostic .diag-next { color: var(--muted); }
+.diag-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.diag-dismiss { padding: 6px 2px; background: none; border: 0; color: var(--muted); }
+.diag-dismiss:hover { color: var(--fg); }
+
 .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); text-align: center; padding: 16px; }
 
 .notice { padding: 7px 12px; font-size: 12px; background: color-mix(in srgb, var(--bad) 16%, var(--panel)); border-top: 1px solid color-mix(in srgb, var(--bad) 45%, transparent); }

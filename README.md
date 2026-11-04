@@ -175,6 +175,7 @@ A running server keeps the config it unsealed with. After `edit` or `import`, se
 ## Using Shellport
 
 - **Tab bar.** The sidebar toggle and the host search box sit at the left. Each session is a tab. Drag tabs to reorder them.
+- **Connection diagnostics.** If a connection fails before the shell opens, its pane shows the failed stage, whether it involved the host or bastion, and a suggested next step. Reconnect retries the connection; Show terminal reveals its output.
 - **Host list.** Click a host to open a terminal. Hover over a host, or focus it with the keyboard, and click **+** to open another session to the same host.
 - **Session panel.** The panel on the right of the tab bar shows the connection details and your recent sign-ins. **Sign out others** and **Close session** are buttons at the bottom: the first ends your other sessions, the second closes the active tab. Use the toggle in the tab bar to hide the panel.
 - **Files.** Click the folder icon on a tab to see the host's files, and click it again to go back to the terminal. Click a file or folder to select it, double-click to open a folder or view a file, and right-click for **View** or **Open**, **Download** and **Delete**. The path bar has **Up** and **Refresh**. Delete asks first, removes one file or one empty folder, and can't be undone. The viewer is read only and shows the first 256 KB of a text file.

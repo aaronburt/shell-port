@@ -374,6 +374,15 @@ test("UI: a host-key mismatch is refused with a clear message", async () => {
   await ui.locator('button.host[data-host="mismatch"]').click();
   await waitTerm(ui, /Host key did not match the pinned fingerprint/);
   await until("closed", async () => /closed/.test(await statusText(ui)), 10_000);
+  const diagnostic = ui.locator(".pane:not([hidden]) .diagnostic");
+  await diagnostic.waitFor();
+  assert.match(await diagnostic.innerText(), /Host · Check the host key/);
+  assert.match(await diagnostic.innerText(), /verify the host key independently/);
+  await diagnostic.getByRole("button", { name: "Show terminal" }).click();
+  assert.equal(await diagnostic.count(), 0);
+  await ui.locator(".pane:not([hidden]) .banner").getByRole("button", { name: "Reconnect" }).click();
+  await diagnostic.waitFor();
+  assert.match(await diagnostic.innerText(), /Host · Check the host key/);
   await closeAllTabs(ui);
 });
 

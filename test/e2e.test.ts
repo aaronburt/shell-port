@@ -41,20 +41,22 @@ let bastionPort = 0;
 let lastPty: any;
 let lastWindow: any;
 function acceptLogin(ctx: any) {
-  if (ctx.method === "password" && ctx.username === "deploy" && ctx.password === "s3cret") ctx.accept();
+  if (ctx.method === "password" && (ctx.username === "deploy" || ctx.username === "no-shell") && ctx.password === "s3cret") ctx.accept();
   else if (ctx.method === "publickey" && ctx.username === "deploy" && ctx.key.algo === userPub.type &&
     Buffer.compare(ctx.key.data, userPub.getPublicSSH()) === 0 && (!ctx.signature || userPub.verify(ctx.blob!, ctx.signature, ctx.hashAlgo) === true)) ctx.accept();
   else ctx.reject(["password", "publickey"]);
 }
 const sshd = new Server({ hostKeys: [hostKey.private] }, (client) => {
-  client.on("authentication", acceptLogin);
+  let noShell = false;
+  client.on("authentication", (ctx) => { noShell = ctx.username === "no-shell"; acceptLogin(ctx); });
   client.on("ready", () => {
     client.on("session", (accept) => {
       const session = accept();
       session.on("sftp", (acc) => serveSftp(sftpRoot, acc));
       session.on("pty", (acc, _rej, info) => { lastPty = info; acc?.(); });
       session.on("window-change", (acc, _rej, info) => { lastWindow = info; acc?.(); });
-      session.on("shell", (acc) => {
+      session.on("shell", (acc, reject) => {
+        if (noShell) return reject();
         const ch = acc();
         ch.write("welcome to fake-host\r\n$ ");
         let pasted = Buffer.alloc(0);
@@ -140,6 +142,12 @@ before(async () => {
         auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: ["SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"] },
       { id: "badpw", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "password", password: "nope" }, hostKeyFingerprints: [fp] },
+      { id: "no-shell", host: "127.0.0.1", port: sshPort, username: "no-shell",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp] },
+      { id: "bad-bastion", host: "127.0.0.1", port: sshPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], via: "wrongkey" },
+      { id: "bad-tunnel", host: "127.0.0.1", port: bastionPort, username: "deploy",
+        auth: { type: "password", password: "s3cret" }, hostKeyFingerprints: [fp], via: "bastion" },
       { id: "filepw", host: "127.0.0.1", port: sshPort, username: "deploy",
         auth: { type: "password", password: { file: passwordFile } }, hostKeyFingerprints: [fp] },
       { id: "private", host: "127.0.0.1", port: sshPort, username: "deploy",
@@ -314,7 +322,7 @@ test("signed-in user gets the app and only display fields for permitted hosts", 
   const cookie = await signIn("AaronBurt");
   assert.match(await (await fetch(base + "/", { headers: { cookie } })).text(), /\/assets\/app-[A-Z0-9]{8}\.js/);
   const hosts = await (await fetch(base + "/api/hosts", { headers: { cookie } })).json();
-  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "nofiles", "locked", "wrongkey", "badpw", "filepw", "bastion", "bastion-locked", "via-plain", "via-locked", "via-locked-bastion", "private-via"]);
+  assert.deepEqual(hosts.map((h: any) => h.id), ["fake", "nofiles", "locked", "wrongkey", "badpw", "no-shell", "bad-bastion", "bad-tunnel", "filepw", "bastion", "bastion-locked", "via-plain", "via-locked", "via-locked-bastion", "private-via"]);
   const raw = JSON.stringify(hosts);
   assert.doesNotMatch(raw, /s3cret|SHA256|password/);
   assert.equal(hosts[0].addr, `deploy@127.0.0.1:${sshPort}`);
@@ -355,6 +363,7 @@ test("host key mismatch is refused", async () => {
   const t = openWs(cookie, "wrongkey");
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
   assert.match(t.json.find((m) => m.t === "error").message, /Host key did not match/);
+  assert.deepEqual(t.json.find((m) => m.t === "error").diagnostic, { stage: "host-key", role: "target" });
   const failed = app.auditLog.all({ type: "fail" })[0];
   assert.equal(failed.kind, "ssh_failed");
   assert.match(failed.detail, /Host key did not match/);
@@ -365,6 +374,21 @@ test("bad credentials give a clear error", async () => {
   const t = openWs(cookie, "badpw");
   await t.waitFor(() => t.json.some((m) => m.state === "closed"));
   assert.match(t.json.find((m) => m.t === "error").message, /rejected the configured credentials/);
+  assert.deepEqual(t.json.find((m) => m.t === "error").diagnostic, { stage: "authentication", role: "target" });
+});
+
+test("connection diagnostics identify shell, bastion and tunnel failures", async () => {
+  const cookie = await signIn();
+  for (const [host, expected] of [
+    ["no-shell", { stage: "shell", role: "target" }],
+    ["bad-bastion", { stage: "host-key", role: "bastion" }],
+    ["bad-tunnel", { stage: "connection", role: "target" }],
+  ] as const) {
+    const t = openWs(cookie, host);
+    await t.waitFor(() => t.json.some((m) => m.state === "closed"));
+    assert.deepEqual(t.json.find((m) => m.t === "error")?.diagnostic, expected, host);
+    assert.ok(!t.json.some((m) => m.state === "connected"));
+  }
 });
 
 test("per-user terminal limit", async () => {
