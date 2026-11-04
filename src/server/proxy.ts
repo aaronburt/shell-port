@@ -17,25 +17,6 @@ const PASSPHRASE_WAIT_MS = 120_000;
 const MAX_PASSPHRASE_LEN = 1024;
 const DRAIN_POLL_MS = 25;
 
-const CONTEXT_COMMAND = `uname -sm 2>/dev/null; (. /etc/os-release 2>/dev/null && printf '%s\\n' "$PRETTY_NAME") || true; printf '%s\\n' "$SHELL"`;
-const CONTEXT_WAIT_MS = 5000;
-
-export function parseHostContext(out: string, username: string) {
-  const lines = out.trim().split("\n").map((l) => l.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80));
-  const [kernel = "", arch = ""] = (lines[0] ?? "").split(/\s+/);
-  const distro = lines.length >= 3 ? lines[1] : "";
-  const shell = (lines[lines.length - 1] ?? "").split("/").pop() ?? "";
-  const os = distro || kernel;
-  return { ...(os ? { os } : {}), ...(shell ? { shell } : {}), ...(arch ? { arch } : {}), username };
-}
-
-export interface ExecResult {
-  output: string;
-  exitCode: number | null;
-  truncated: boolean;
-  timedOut: boolean;
-}
-
 export interface TerminalTiming {
   passphraseWaitMs?: number;
   idleTimeoutMs?: number;
@@ -48,7 +29,6 @@ export interface TerminalInfo {
   hostName: string;
   files: boolean;
   sftp(): Promise<SFTPWrapper>;
-  exec(command: string, timeoutMs: number, maxChars: number): Promise<ExecResult>;
   touch(): void;
   close(reason: string): void;
 }
@@ -150,40 +130,8 @@ export function openTerminal(opts: {
     });
     return sftpPromise;
   };
-  let execBusy = false;
-  const exec = (command: string, timeoutMs: number, maxChars: number): Promise<ExecResult> => {
-    if (!ready || closed) return Promise.reject(new Error("not_connected"));
-    if (execBusy) return Promise.reject(new Error("busy"));
-    execBusy = true;
-    return new Promise<ExecResult>((resolve, reject) => {
-      ssh.exec(command, (err, ch) => {
-        if (err) {
-          execBusy = false;
-          return reject(new Error("exec_failed"));
-        }
-        let out = "";
-        let truncated = false;
-        let timedOut = false;
-        let code: number | null = null;
-        const take = (d: Buffer) => {
-          if (out.length >= maxChars) { truncated = true; return; }
-          out += d.toString("utf8");
-          if (out.length > maxChars) { out = out.slice(0, maxChars); truncated = true; }
-        };
-        const timer = setTimeout(() => { timedOut = true; try { ch.close(); } catch {} }, timeoutMs);
-        ch.on("data", take);
-        ch.stderr.on("data", take);
-        ch.on("exit", (c: number | null) => { code = typeof c === "number" ? c : null; });
-        ch.on("close", () => {
-          clearTimeout(timer);
-          execBusy = false;
-          resolve({ output: out, exitCode: code, truncated, timedOut });
-        });
-      });
-    });
-  };
   const touch = () => { lastActivity = Date.now(); };
-  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, hostName: host.name, files, sftp, exec, touch, close: (reason) => close(reason) };
+  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, hostName: host.name, files, sftp, touch, close: (reason) => close(reason) };
 
   const ssh = new Client();
   const bastion = route ? new Client() : undefined;
@@ -304,17 +252,6 @@ export function openTerminal(opts: {
           since: new Date().toISOString(),
           recording: !!recording,
         },
-      });
-      ssh.exec(CONTEXT_COMMAND, (execErr, ch) => {
-        if (execErr) return;
-        let out = "";
-        const timer = setTimeout(() => ch.close(), CONTEXT_WAIT_MS);
-        ch.on("data", (d: Buffer) => { if (out.length < 2048) out += d.toString("utf8"); });
-        ch.stderr.on("data", () => {});
-        ch.on("close", () => {
-          clearTimeout(timer);
-          if (!closed) send({ t: "context", ...parseHostContext(out, host.username) });
-        });
       });
       const onData = (d: Buffer) => {
         if (closed) return;

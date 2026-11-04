@@ -17,7 +17,6 @@
     </div>
     <div class="tab-scroll" id="tab-scroll"></div>
     <div class="tab-tools">
-      <button class="tool" id="ai-open" type="button" aria-label="Ask AI" aria-expanded="false" aria-controls="ai-panel" title="Ask AI (Alt Shift A)" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></button>
       <button class="tool" id="lock-btn" type="button" aria-label="Lock screen" title="Lock screen (Alt Shift L). Sessions stay connected."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
       <button class="tool" id="layout-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Pane layout and sessions" title="Layout and sessions (up to 8 per view)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg><span class="mono" id="pane-count">1/8</span></button>
       <button class="tool" id="drawer-toggle" aria-label="Toggle session details" aria-pressed="true" title="Toggle session details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
@@ -131,7 +130,6 @@
       <div class="acct-group" id="acct-server">
         <section class="acct-card" id="acct-server-card">
           <div class="acct-card-head"><h5>Server</h5></div>
-          <div class="acct-row" id="ai-admin-row" hidden><div class="acct-label"><strong>AI suggestions</strong><small>Configure a LiteLLM service</small></div><button class="btn ghost" id="ai-settings-open" type="button">Configure</button></div>
           <div class="acct-row" id="acct-audit-sec" hidden>
             <div class="acct-label"><strong>Audit log</strong></div>
             <button class="btn ghost" id="acct-audit" type="button">Open</button>
@@ -211,42 +209,6 @@
           </div>
         </div>
       </aside>
-      <aside class="ai-drawer" id="ai-panel" aria-label="Ask AI" hidden>
-        <div class="ai-grip" id="ai-grip" role="separator" aria-orientation="vertical" aria-label="Resize Ask AI" tabindex="0" title="Drag to resize. Double-click to reset."></div>
-        <div class="ai-head">
-          <h4><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>Ask AI</h4>
-          <div class="ai-modes" id="ai-modes" role="group" aria-label="Mode" hidden>
-            <button type="button" id="ai-mode-s" aria-pressed="true">Suggest</button>
-            <button type="button" id="ai-mode-i" aria-pressed="false">Investigate</button>
-          </div>
-          <button class="tool ai-clear" type="button" id="ai-clear" title="Start a new conversation" hidden>New</button>
-          <button class="tool ai-x" type="button" id="ai-close" aria-label="Close Ask AI" title="Close (Esc)">×</button>
-        </div>
-        <div class="ai-target" id="ai-target"></div>
-        <div class="ai-scroll" id="ai-scroll">
-          <div class="ai-empty" id="ai-empty"></div>
-          <div class="ai-thread" id="ai-thread" aria-live="polite"></div>
-        </div>
-        <div class="ai-foot">
-          <button class="ai-ctxchip" type="button" id="ai-ctxchip" aria-expanded="false" aria-controls="ai-opts">Context: <b id="ai-ctxsum">none</b><svg class="chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-          <div class="ai-opts" id="ai-opts" hidden>
-            <label><input type="checkbox" id="ai-ctx"> Include host context</label>
-            <span class="ai-chip" id="ai-chip" hidden></span>
-            <label><input type="checkbox" id="ai-out"> Include last few lines of terminal output</label>
-            <div class="ai-preview" id="ai-preview" hidden>
-              <small class="ai-warn">This text is sent to the AI service. It may contain secrets such as tokens or passwords, so check it first.</small>
-              <pre id="ai-preview-text"></pre>
-            </div>
-          </div>
-          <p class="ai-note" id="ai-inv-intro" hidden></p>
-          <form class="ai-bar" id="ai-form">
-            <input id="ai-prompt" maxlength="4000" autocomplete="off" required placeholder="Describe what you want to do" aria-label="What would you like to do?">
-            <button class="btn sm" type="submit" id="ai-submit">Suggest</button>
-          </form>
-          <p class="ai-note" id="ai-message" role="status">Your request goes to the configured AI service. Nothing is run for you.</p>
-          <p class="ai-hint"><kbd>Esc</kbd> closes · <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>A</kbd> toggles · drag the left edge to resize</p>
-        </div>
-      </aside>
     </div>
     <div class="notice" id="notice" role="alert" hidden></div>
   </div>
@@ -296,29 +258,5 @@
   </div>
 </section>
 <script src="/assets/app.js"></script>
-<dialog id="ai-settings" class="ai-dialog">
-  <form id="ai-settings-form">
-    <h3>AI suggestions</h3>
-    <p>Connect Shellport to a LiteLLM service. Disabled by default.</p>
-    <div class="ai-warning"><strong>Before enabling:</strong> User prompts are sent to this LiteLLM service, along with host details (operating system, shell, architecture and username) and recent terminal output when a user chooses to include them, and may be forwarded to an external model provider. Prompts and terminal output can contain sensitive information, including secrets. The service and provider may retain data, and usage may incur charges. Review their privacy and retention policies. HTTP connections send prompts and the gateway key without transport encryption; use HTTPS for remote services.</div>
-    <label><input type="checkbox" id="ai-enabled"> Enable suggestions</label>
-    <label>LiteLLM base URL <input id="ai-url" type="url" placeholder="http://litellm:4000/v1" maxlength="2048"></label>
-    <label>Model name <input id="ai-model" maxlength="256" autocomplete="off"></label>
-    <label>Gateway API key <input id="ai-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="Enter key; leave blank to keep existing"></label>
-    <fieldset class="ai-investigate">
-      <legend>Investigate mode</legend>
-      <label><input type="checkbox" id="ai-investigate"> Let the AI look at the connected machine. Off by default.</label>
-      <p>The AI can ask for read-only commands. Users approve each command and see its output before it is sent. Commands run through a separate SSH channel and only if they pass a read-only check on the server.</p>
-      <div class="ai-pair">
-        <label>Seconds per command <select id="ai-timeout"><option>5</option><option selected>15</option><option>30</option></select></label>
-      </div>
-      <div class="ai-warning"><strong>Extra risk:</strong> command output can contain secrets such as configuration files, environment values and logs. Whatever a user approves is sent to the LiteLLM service and possibly its model provider. Every question, command and send is written to the audit log.</div>
-      <label><input type="checkbox" id="ai-ack-investigate"> I understand output from servers will be shared with this service.</label>
-    </fieldset>
-    <label><input type="checkbox" id="ai-ack"> I understand and accept the data sharing and cost risks.</label>
-    <p id="ai-settings-message" role="status"></p>
-    <div class="ai-actions"><button class="btn ghost" type="button" id="ai-settings-close">Cancel</button><button class="btn" type="submit">Save</button></div>
-  </form>
-</dialog>
 </body>
 </html>

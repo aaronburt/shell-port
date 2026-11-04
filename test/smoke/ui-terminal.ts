@@ -34,7 +34,6 @@ test("UI: the toggle and a slim search box share one wide tab at the left of a f
   assert.equal(Math.round(search.height), 26, "the search box is 26px high");
   assert.ok(rail.y >= bar.y + bar.height - 1, "the sidebar starts below the tab bar");
   assert.equal(await ui.locator("#add-tab, #tabs .add").count(), 0);
-  assert.equal(await ui.locator("#ai-open").isHidden(), true, "AI suggestions are hidden when disabled");
   assert.deepEqual(await ui.locator(".tab-tools button:visible").evaluateAll((els) => els.map((e) => e.id)), ["lock-btn", "layout-btn", "drawer-toggle"]);
 });
 
