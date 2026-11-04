@@ -12,6 +12,7 @@ import { initAudit } from "./audit.js";
 import { initRecordingPage, type RecordingMeta } from "./playback.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
+let ai: ReturnType<typeof initAi> | undefined;
 interface Host { id: string; name: string; group: string; tag: string; addr: string; via?: string }
 interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean; version: string; releaseNotesUrl: string }
 interface Signin {
@@ -559,6 +560,7 @@ const paneHidden = (p: Pane) => p.tab.layout.hidden || stashed(p);
 
 function markFocus(t: Tab) {
   for (const p of panesOf(t)) p.el.classList.toggle("focus", p === t.focus);
+  if (t === active) ai?.refresh();
 }
 
 function buildNode(n: Node): HTMLElement {
@@ -1257,13 +1259,15 @@ function handleTermKey(e: KeyboardEvent, pane: Pane): boolean {
 }
 
 let lock: ReturnType<typeof initLock> | undefined;
-let ai: ReturnType<typeof initAi> | undefined;
 
 function aiTarget() {
   const t = shown();
   if (!t || t.mode !== "term") return undefined;
   const p = t.focus;
   return {
+    key: p,
+    label: p.info?.user ? `${p.info.user}@${p.host.name}` : p.host.name,
+    multi: panesOf(t).length > 1,
     context: () => p.context,
     terminalId: () => (p.state === "connected" ? p.info?.id : undefined),
     output: () => {
