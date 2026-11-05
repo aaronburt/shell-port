@@ -120,12 +120,20 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     next();
   });
 
-  const requireSession = (req: Request, res: Response, next: NextFunction) => {
+  const sessionGate = (allowLocked: boolean) => (req: Request, res: Response, next: NextFunction) => {
     if (!apiLimiter.hit(ipOf(req))) return res.status(429).json({ error: "rate_limited" });
     const s = getSession(req.headers.cookie);
     if (!s) return res.status(401).json({ error: "unauthenticated" });
+    if (s.locked && !allowLocked) return res.status(423).json({ error: "locked" });
     res.locals.session = s;
     next();
+  };
+  // Refuses everything while the session is locked. Only the lock/unlock routes use the lenient gate.
+  const requireSession = sessionGate(false);
+  const requireSessionEvenIfLocked = sessionGate(true);
+  const setSessionLocked = (s: UserSession, v: boolean) => {
+    s.locked = v;
+    for (const t of terminalsBySession.get(s.id) ?? []) t.setLocked(v);
   };
 
   const requireSameOrigin = (req: Request, res: Response, next: NextFunction) =>
@@ -296,11 +304,26 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
 
   const unlockOk = (req: Request, res: Response, s: UserSession, how: "totp" | "passkey") => {
     s.totpFailures = 0;
+    setSessionLocked(s, false);
     audit("lock.unlocked", { ip: ipOf(req), user: s.login, githubId: s.githubId, method: how });
     res.status(204).end();
   };
 
-  app.post("/api/lock/totp", requireSession, requireSameOrigin, express.json({ limit: "1kb" }), (req, res) => {
+  app.get("/api/lock", requireSessionEvenIfLocked, (_req, res) => {
+    const s: UserSession = res.locals.session;
+    res.json({ locked: s.locked, passkeys: (findUser(cfg, who(s))?.passkeys.length ?? 0) > 0 });
+  });
+
+  app.post("/api/lock", requireSessionEvenIfLocked, requireSameOrigin, (req, res) => {
+    const s: UserSession = res.locals.session;
+    if (!s.locked) {
+      setSessionLocked(s, true);
+      audit("lock.locked", { ip: ipOf(req), user: s.login, githubId: s.githubId });
+    }
+    res.status(204).end();
+  });
+
+  app.post("/api/lock/totp", requireSessionEvenIfLocked, requireSameOrigin, express.json({ limit: "1kb" }), (req, res) => {
     const s: UserSession = res.locals.session;
     if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
     const entry = findUser(cfg, who(s));
@@ -311,7 +334,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     unlockOk(req, res, s, "totp");
   });
 
-  app.post("/api/lock/passkey/options", requireSession, requireSameOrigin, async (_req, res) => {
+  app.post("/api/lock/passkey/options", requireSessionEvenIfLocked, requireSameOrigin, async (_req, res) => {
     const s: UserSession = res.locals.session;
     if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
     const user = findUser(cfg, who(s));
@@ -326,7 +349,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.json(options);
   });
 
-  app.post("/api/lock/passkey/verify", requireSession, requireSameOrigin, express.json({ limit: "16kb" }), async (req, res) => {
+  app.post("/api/lock/passkey/verify", requireSessionEvenIfLocked, requireSameOrigin, express.json({ limit: "16kb" }), async (req, res) => {
     const s: UserSession = res.locals.session;
     if (!unlockLimiter.hit(s.id)) return res.status(429).json({ error: "rate_limited" });
     const challenge = unlocks.take(s.id);
@@ -370,9 +393,9 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     res.status(204).end();
   });
 
-  app.get("/api/me", requireSession, (_req, res) => {
+  app.get("/api/me", requireSessionEvenIfLocked, (_req, res) => {
     const s: UserSession = res.locals.session;
-    res.json({ via: s.method, canManagePasskeys: !!opts.passkeyStore, login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)), version: BUILD_VERSION, releaseNotesUrl: releaseNotesUrl(BUILD_VERSION) });
+    res.json({ locked: s.locked, via: s.method, canManagePasskeys: !!opts.passkeyStore, login: s.login, name: s.name, avatarUrl: s.avatarUrl, expiresAt: s.expiresAt, sealable: !!opts.onSeal, admin: isAdmin(cfg, who(s)), canAddHosts: !!opts.hostStore && isAdmin(cfg, who(s)), version: BUILD_VERSION, releaseNotesUrl: releaseNotesUrl(BUILD_VERSION) });
   });
 
   if (opts.onSeal) {
@@ -787,6 +810,7 @@ export function createApp(cfg: LoadedConfig, opts: AppOptions) {
     if (req.headers.origin !== cfg.server.publicUrl) return reject(403, "Forbidden");
     const s = getSession(req.headers.cookie);
     if (!s) return reject(401, "Unauthorized");
+    if (s.locked) return reject(423, "Locked");
     const visible = hostsForUser(cfg, who(s));
     const host = visible.find((h) => h.id === url.searchParams.get("host"));
     if (!host) return reject(404, "Not Found");

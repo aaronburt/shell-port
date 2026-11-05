@@ -12,7 +12,7 @@ import { initRecordingPage, type RecordingMeta } from "./playback.js";
 import { autoPassEnabled, countPassphrases, forgetAllPassphrases, forgetPassphrase, loadPassphrase, passSupported, savePassphrase, setAutoPassEnabled } from "./passstore.js";
 
 interface Host { id: string; name: string; group: string; tag: string; addr: string; via?: string }
-interface Me { via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean; version: string; releaseNotesUrl: string }
+interface Me { locked?: boolean; via?: "github" | "passkey"; canManagePasskeys?: boolean; login: string; name: string; avatarUrl?: string; expiresAt: number; sealable?: boolean; admin?: boolean; canAddHosts?: boolean; version: string; releaseNotesUrl: string }
 interface Signin {
   id: string; kind: "signin" | "totp_failed" | "passphrase_failed"; ip: string; at: number;
   method?: "github" | "passkey"; session?: string; current?: boolean; active?: boolean; expiresAt?: number;
@@ -993,6 +993,10 @@ function connect(pane: Pane) {
       }
       return;
     }
+    if (msg.t === "notice") {
+      pane.term.write(`\r\n\x1b[2m${msg.message}\x1b[0m\r\n`);
+      return;
+    }
     if (msg.t === "status") {
       pane.state = msg.state;
       if (msg.info) pane.info = msg.info;
@@ -1600,6 +1604,7 @@ lock = initLock({
     closeSignOutDialog();
   },
   afterUnlock: () => {
+    void ensureLoaded();
     requestAnimationFrame(fitActive);
     const t = shown(); if (t && t.mode === "term") t.focus.term.focus();
   },
@@ -1645,10 +1650,27 @@ window.addEventListener("blur", () => setShift(false));
   setUiTheme(savedChoice("sp.theme", UI_THEMES, "system"), false);
   setTermTheme(savedChoice("sp.termTheme", TERM_KEYS, "shellport"), false);
   if (matchMedia("(max-width: 900px)").matches) setDrawer(false, false);
-  const [me, hs] = await Promise.all([api<Me>("/api/me"), api<Host[]>("/api/hosts")]);
-  hosts = hs;
+  const me = await api<Me>("/api/me");
   renderMe(me);
-  renderAll();
-  openFromUrl();
+  if (me.locked) {
+    // The server kept this session locked across the reload: nothing else is served until it is unlocked.
+    lock?.lock();
+    return;
+  }
+  await ensureLoaded();
   lock?.resume();
 })();
+
+let loaded = false;
+async function ensureLoaded() {
+  if (loaded) return;
+  loaded = true;
+  try {
+    hosts = await api<Host[]>("/api/hosts");
+  } catch {
+    loaded = false;
+    return;
+  }
+  renderAll();
+  openFromUrl();
+}

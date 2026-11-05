@@ -30,8 +30,11 @@ export interface TerminalInfo {
   files: boolean;
   sftp(): Promise<SFTPWrapper>;
   touch(): void;
+  setLocked(locked: boolean): void;
   close(reason: string): void;
 }
+
+const LOCK_HOLD_MAX = 1024 * 1024;
 
 type Role = "bastion" | "target";
 type FailureStage = "connection" | "host-key" | "authentication" | "shell" | "configuration" | "passphrase" | "recording";
@@ -131,7 +134,24 @@ export function openTerminal(opts: {
     return sftpPromise;
   };
   const touch = () => { lastActivity = Date.now(); };
-  const handle: TerminalInfo = { id, user: session.login, hostId: host.id, hostName: host.name, files, sftp, touch, close: (reason) => close(reason) };
+  // While the owner's session is locked the browser gets no terminal output and its input is dropped.
+  // The SSH connection stays up; recent output is held (bounded) and replayed on unlock.
+  let locked = session.locked;
+  let held: Buffer[] = [];
+  let heldBytes = 0;
+  let heldDropped = false;
+  const setLocked = (v: boolean) => {
+    if (locked === v) return;
+    locked = v;
+    if (v) return;
+    if (heldDropped) send({ t: "notice", message: "Output while the screen was locked was too long and was truncated." });
+    const chunks = held;
+    held = [];
+    heldBytes = 0;
+    heldDropped = false;
+    if (ws.readyState === ws.OPEN) for (const c of chunks) ws.send(c);
+  };
+  const handle: TerminalInfo = { setLocked, id, user: session.login, hostId: host.id, hostName: host.name, files, sftp, touch, close: (reason) => close(reason) };
 
   const ssh = new Client();
   const bastion = route ? new Client() : undefined;
@@ -265,6 +285,15 @@ export function openTerminal(opts: {
         }
         bytesOut += d.length;
         if (ws.readyState !== ws.OPEN) return;
+        if (locked) {
+          held.push(d);
+          heldBytes += d.length;
+          while (heldBytes > LOCK_HOLD_MAX && held.length > 1) {
+            heldBytes -= held.shift()!.length;
+            heldDropped = true;
+          }
+          return;
+        }
         ws.send(d);
         if (ws.bufferedAmount > HIGH_WATER && !drainTimer) {
           s.pause();
@@ -308,6 +337,7 @@ export function openTerminal(opts: {
   }
 
   ws.on("message", (data: RawData, isBinary: boolean) => {
+    if (locked) return;
     if (isBinary) {
       if (!stream) return;
       const buf = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);

@@ -64,8 +64,8 @@ export function initLock(o: LockOptions) {
   const hasPasskeys = async () => {
     if (!passkeysSupported()) return false;
     try {
-      const r = await fetch("/api/passkeys", { credentials: "same-origin" });
-      return r.ok && (await r.json()).length > 0;
+      const r = await fetch("/api/lock", { credentials: "same-origin" });
+      return r.ok && !!(await r.json()).passkeys;
     } catch {
       return false;
     }
@@ -76,6 +76,10 @@ export function initLock(o: LockOptions) {
     locked = true;
     clearTimeout(idleTimer);
     write(LOCKED, o.scope());
+    // The server stops relaying terminal traffic and refuses API calls from this session until it is unlocked.
+    fetch("/api/lock", { method: "POST", credentials: "same-origin" })
+      .then((r) => { if (r.status === 401) o.leave("/"); })
+      .catch(() => {});
     o.beforeLock();
     document.querySelectorAll<HTMLElement>(".scrim").forEach((s) => { s.hidden = true; });
     ws.inert = true;
