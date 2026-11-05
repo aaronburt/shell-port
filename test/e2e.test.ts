@@ -1124,6 +1124,40 @@ test("sealing needs a signed-in session and a same-origin request, then hands ov
   assert.equal(sealCalls, 1);
 });
 
+test("screen lock is enforced by the server: no input, no API, no new terminals until unlocked", async () => {
+  const cookie = await signIn();
+  const { t, files } = await terminalWithFiles(cookie);
+  const headers = { cookie, origin: base };
+  await t.waitFor(() => t.out.includes("welcome to fake-host"));
+
+  assert.equal((await fetch(`${base}/api/lock`, { headers })).status, 200);
+  assert.equal((await fetch(`${base}/api/lock`, { method: "POST", headers: { cookie } })).status, 403);
+  assert.equal((await fetch(`${base}/api/lock`, { method: "POST", headers })).status, 204);
+  assert.equal((await (await fetch(`${base}/api/lock`, { headers })).json()).locked, true);
+  assert.equal((await (await fetch(`${base}/api/me`, { headers })).json()).locked, true);
+
+  assert.equal((await fetch(`${base}/api/hosts`, { headers })).status, 423);
+  assert.equal((await files()).status, 423);
+  assert.equal(await wsStatus(cookie, "fake", base), 423);
+
+  t.ws.send(Buffer.from("secret"), { binary: true });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!t.out.includes("SECRET"), "input must be dropped while locked");
+  assert.equal(t.closed(), undefined, "the SSH session stays connected");
+
+  clock += 30_000;
+  const bad = await fetch(`${base}/api/lock/totp`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ code: "000000" }) });
+  assert.equal(bad.status, 400);
+  assert.equal((await fetch(`${base}/api/hosts`, { headers })).status, 423);
+  const ok = await fetch(`${base}/api/lock/totp`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ code: code() }) });
+  assert.equal(ok.status, 204);
+
+  assert.equal((await fetch(`${base}/api/hosts`, { headers })).status, 200);
+  t.ws.send(Buffer.from("hello"), { binary: true });
+  await t.waitFor(() => t.out.includes("HELLO"));
+  assert.ok(!t.out.includes("SECRET"));
+});
+
 test("shutdown closes open terminals with a reason, stops listening and returns before the deadline", async () => {
   const cookie = await signIn();
   const ts = [openWs(cookie, "fake"), openWs(cookie, "fake")];

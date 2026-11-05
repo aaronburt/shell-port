@@ -9,6 +9,7 @@ export interface UserSession {
   stage: "totp" | "full";
   method: "github" | "passkey";
   totpFailures: number;
+  locked: boolean;
   createdAt: number;
   expiresAt: number;
 }
@@ -31,6 +32,7 @@ export class SessionStore {
       stage,
       method,
       totpFailures: 0,
+      locked: false,
       createdAt: now,
       expiresAt: now + (stage === "full" ? this.ttlMs : PENDING_TTL_MS),
     };

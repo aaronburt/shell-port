@@ -309,6 +309,16 @@ test("passkey sign-in records the method and signing in again replaces any stale
 const codeNow = (offset = 0) => hotp(base32Decode(totpSecret), Math.floor(Date.now() / 30_000) + offset);
 const lockPost = (path: string, cookie: string, body?: unknown) => fetch(`${base}/api/lock/${path}`, json(cookie, body ?? {}));
 
+test("lock state is per session and survives until unlocked", async () => {
+  const a = await fullSession("aaronburt");
+  const b = await fullSession("other");
+  assert.equal((await fetch(`${base}/api/lock`, json(a, {}))).status, 204);
+  assert.equal((await fetch(`${base}/api/passkeys`, { headers: { cookie: a } })).status, 423);
+  assert.equal((await fetch(`${base}/api/passkeys`, { headers: { cookie: b } })).status, 200);
+  assert.equal((await lockPost("totp", a, { code: codeNow(-1) })).status, 204);
+  assert.equal((await fetch(`${base}/api/passkeys`, { headers: { cookie: a } })).status, 200);
+});
+
 test("lock endpoints need a fully signed-in session and a same-origin request", async () => {
   assert.equal((await lockPost("totp", "", { code: "123456" })).status, 401);
   assert.equal((await lockPost("passkey/options", "")).status, 401);
